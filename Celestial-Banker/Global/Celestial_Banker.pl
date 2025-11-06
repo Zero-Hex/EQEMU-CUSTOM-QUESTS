@@ -3173,91 +3173,93 @@ sub DisbandAlliance {
 
 sub AllianceStatus {
     my $NPCName = "Banker";
-    
     my $client = plugin::val('$client');
     my $char_id = $client->CharacterID();
     my $alliance_id = GetAllianceID();
     
-    my $db = Database::new(Database::Content);
-    
-    if ($alliance_id > 0) {
-        # Get alliance info
-        my $alliance_query = $db->prepare("SELECT name, owner_character_id FROM $TABLE_ALLIANCE WHERE id = ?");
-        $alliance_query->execute($alliance_id);
-        my $alliance_row = $alliance_query->fetch_hashref();
-        $alliance_query->close();
-        
-        my $alliance_name = $alliance_row->{name};
-        my $owner_char_name = GetCharacterName($alliance_row->{owner_character_id});
-        
-        # Get your permission
-        my $permission_query = $db->prepare("SELECT permission_level FROM $TABLE_ALLIANCE_MEMBERS WHERE character_id = ? AND alliance_id = ?");
-        $permission_query->execute($char_id, $alliance_id);
-        my $permission_row = $permission_query->fetch_hashref();
-        $permission_query->close();
-        
-        my $rank = "Member";
-        if ($permission_row) {
-            if ($permission_row->{permission_level} == $PERMISSION_OWNER) {
-                $rank = "Owner";
-            } elsif ($permission_row->{permission_level} == $PERMISSION_OFFICER) {
-                $rank = "Officer";
-            }
-        }
-        
-        $client->Message(315, "$NPCName whispers to you, '=== ALLIANCE STATUS ==='");
-        $client->Message(315, "$NPCName whispers to you, 'Alliance: **$alliance_name**'");
-        $client->Message(315, "$NPCName whispers to you, 'Your Rank: $rank'");
-        $client->Message(315, "$NPCName whispers to you, 'Owner: $owner_char_name'");
-        $client->Message(315, "--------------------------------------------------------");
-        
-        # Get all alliance members with DISTINCT to prevent duplicates
-        my $members_query = $db->prepare("
-            SELECT DISTINCT character_id, permission_level 
-            FROM $TABLE_ALLIANCE_MEMBERS 
-            WHERE alliance_id = ?
-            ORDER BY permission_level ASC, character_id ASC
+    unless ($alliance_id > 0) {
+        my $db = Database::new(Database::Content);
+        my $q_pending = $db->prepare("
+            SELECT a.name 
+            FROM $TABLE_ALLIANCE a 
+            JOIN $TABLE_ALLIANCE_PENDING ap ON a.id = ap.alliance_id 
+            WHERE ap.character_id = ?
         ");
-        $members_query->execute($alliance_id);
-        
-        my @members;
-        my %seen_chars; # Track seen character IDs to prevent duplicates
-        
-        while (my $row = $members_query->fetch_hashref()) {
-            # Skip if we've already seen this character_id
-            next if exists $seen_chars{$row->{character_id}};
-            $seen_chars{$row->{character_id}} = 1;
-            
-            push @members, $row;
+        $q_pending->execute($char_id);
+        my @pending;
+        while (my $row = $q_pending->fetch_hashref()) { 
+            push @pending, $row->{name}; 
         }
-        $members_query->close();
+        $q_pending->close();
+        $db->close();
         
-        if (@members) {
-            $client->Message(315, "$NPCName whispers to you, 'Alliance Members (" . scalar(@members) . "):'");
-            foreach my $member (@members) {
-                my $member_rank = "Member";
-                if ($member->{permission_level} == $PERMISSION_OWNER) {
-                    $member_rank = "Owner";
-                } elsif ($member->{permission_level} == $PERMISSION_OFFICER) {
-                    $member_rank = "Officer";
-                }
-                
-                # Get character name from character_id
-                my $member_char_name = GetCharacterName($member->{character_id});
-                my $you_indicator = ($member->{character_id} == $char_id) ? " (You)" : "";
-                
-                # Debug output
-                quest::debug("Alliance Member: CharID=$member->{character_id}, Name=$member_char_name, Rank=$member_rank");
-                
-                $client->Message(315, "- $member_char_name ($member_rank)$you_indicator");
-            }
-            $client->Message(315, "--------------------------------------------------------");
+        $client->Message(315, "$NPCName whispers to you, 'You are currently not in an alliance.'");
+        if (@pending) {
+            my $accept_links = join(", ", map { quest::saylink("alliance join $_", 1, $_) } @pending);
+            $client->Message(315, "$NPCName whispers to you, 'You have pending invites from: $accept_links'");
         }
-    } else {
-        $client->Message(315, "$NPCName whispers to you, 'You are not in an alliance.'");
+        return;
     }
     
-    # Check for pending invites
+    my $db = Database::new(Database::Content);
+    
+    # Get alliance name
+    my $alliance_query = $db->prepare("SELECT name FROM $TABLE_ALLIANCE WHERE id = ?");
+    $alliance_query->execute($alliance_id);
+    my $alliance_row = $alliance_query->fetch_hashref();
+    $alliance_query->close();
+    my $alliance_name = $alliance_row->{name};
+    
+    # Get members with their character names
+    my $member_query = $db->prepare("
+        SELECT 
+            am.character_id, 
+            am.permission_level,
+            cd.name as character_name
+        FROM $TABLE_ALLIANCE_MEMBERS am
+        JOIN character_data cd ON cd.id = am.character_id
+        WHERE am.alliance_id = ?
+        ORDER BY am.permission_level ASC, cd.name ASC
+    ");
+    $member_query->execute($alliance_id);
+    
+    my @member_list;
+    while (my $row = $member_query->fetch_hashref()) {
+        push @member_list, {
+            character_id => $row->{character_id},
+            character_name => $row->{character_name},
+            permission_level => $row->{permission_level}
+        };
+    }
+    $member_query->close();
+    $db->close();
+    
+    $client->Message(315, "--- ALLIANCE: $alliance_name ---");
+    
+    foreach my $member (@member_list) {
+        my $level_name = "";
+        if ($member->{permission_level} == 1) { $level_name = "Owner"; }
+        elsif ($member->{permission_level} == 2) { $level_name = "Officer"; }
+        elsif ($member->{permission_level} == 3) { $level_name = "Member"; }
+        
+        my $current_status = ($member->{character_id} == $char_id) ? " (You)" : "";
+        $client->Message(315, "- $member->{character_name} ($level_name)$current_status");
+    }
+    $client->Message(315, "------------------------------");
+    
+    # Check user's permission to show appropriate commands
+    my $user_permission = CheckAlliancePermission($PERMISSION_OFFICER);
+    
+    if ($user_permission) {
+        # Owner or Officer
+        my $kick_link = quest::saylink("alliance kick", 1, "kick");
+        my $promote_link = quest::saylink("alliance promote", 1, "promote");
+        my $demote_link = quest::saylink("alliance demote", 1, "demote");
+        $client->Message(315, "Commands: [$kick_link CharacterName], [$promote_link CharacterName], [$demote_link CharacterName]");
+    }
+    
+    # Check for pending invites at the bottom
+    $db = Database::new(Database::Content);
     my $invites_query = $db->prepare("
         SELECT a.name as alliance_name, ap.invited_by_character_name
         FROM $TABLE_ALLIANCE_PENDING ap
@@ -3271,6 +3273,7 @@ sub AllianceStatus {
         push @invites, $row;
     }
     $invites_query->close();
+    $db->close();
     
     if (@invites) {
         $client->Message(315, "$NPCName whispers to you, 'Pending Alliance Invitations:'");
@@ -3279,8 +3282,6 @@ sub AllianceStatus {
             $client->Message(315, "- $invite->{alliance_name} (invited by $invite->{invited_by_character_name}) ($accept_link)");
         }
     }
-    
-    $db->close();
 }
 
 # =========================================================================
