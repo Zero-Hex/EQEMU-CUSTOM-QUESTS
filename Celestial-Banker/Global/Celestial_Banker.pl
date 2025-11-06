@@ -238,21 +238,19 @@ $client->Message(315, "--- DEPOSIT DEBUG ---");
     my $target_alliance_id = 0;
     my $restricted_id = 0; 
     
-    if ($has_augments || $is_attuned || ($is_nodrop && !$is_heirloom)) {
+if ($has_augments || $is_attuned || ($is_nodrop == 0 && !$is_heirloom)) {
         # Rule: Character Specific (Attuned, Augmented, or No-Drop w/o Heirloom)
         $alliance_item = 0;
         $account_item = 0;
         $client->Message(315, "$NPCName whispers to you, 'Depositing $deposit_quantity character-specific items to your **Character Bank**.'");
     } else {
-        # Rule: Account-Wide Default (Tradable or No-Drop w/ Heirloom)
+        # Rule: Account-Wide Default 
+        # (Tradable/is_nodrop=1) OR (Heirloom No-Drop/is_nodrop=0 & is_heirloom=1)
         $alliance_item = 0;
         $account_item = 1;
         $client->Message(315, "$NPCName whispers to you, 'Depositing $deposit_quantity items to your **Account Bank** (accessible by all your characters).'");
     }
 
-    # --- 3. CHECK and INSERT/UPDATE logic (Remains the same as before, using new flags) ---
-    # ... (the rest of the subroutine logic for checking and updating/inserting the record) ...
-    # This portion of the code is unchanged from your existing file, simply using the new flags.
 
     my $check = $db->prepare("
         SELECT id, quantity FROM $TABLE_BANKER
