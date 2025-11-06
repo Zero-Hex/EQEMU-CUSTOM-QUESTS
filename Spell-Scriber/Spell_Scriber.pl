@@ -51,7 +51,7 @@ sub EVENT_SAY {
     # OPTION 2: Default response if no keyword is used
     # ---------------------------------------------------------------------
     else {
-        $client->Message(15, "I am the Spellmaster. If you require my services, just say 'scribe' to me.");
+        $client->Message(15, "I am the Spellmaster. If you require my services, just say [scribe] to me.");
         return;
     }
 }
