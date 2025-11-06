@@ -1298,9 +1298,9 @@ sub ShowBalance {
             my $withdraw_all = quest::saylink("withdraw platinum $platinum_pools{account}", 0, "(W:All)");
             my $share_alliance = "";
             if ($alliance_id > 0) {
-                $share_alliance = " " . quest::saylink("platinum share alliance", 0, "(ShareAlly)");
+                $share_alliance = " " . quest::saylink("platinum share alliance", 0, "ShareAlly");
             }
-            $client->Message(315, "- Account Platinum: $platinum_pools{account} (All Your Characters) ($withdraw_all) $share_alliance");
+            $client->Message(315, "- Account Platinum: $platinum_pools{account} (All Your Characters) ($withdraw_all) ($share_alliance)");
         }
         
         
@@ -1512,7 +1512,7 @@ if ($item->{is_depositor}) {
                 
                 my $share_alliance = "";
                 if ($alliance_id > 0 && !$is_heirloom) {
-                    $share_alliance = " " . quest::saylink("alliance share $item->{id} $item->{qty}", 0, "ShareAlly");
+                    $share_alliance = " " . quest::saylink("alliance share $item->{id} $item->{qty}", 0, "(ShareAlly)");
                 }
                 $modification_links .= $share_alliance;
             }
@@ -1552,7 +1552,7 @@ if ($item->{is_depositor}) {
                 
                 my $share_alliance = "";
                 if ($alliance_id > 0 && !$is_heirloom) {
-                    $share_alliance = " " . quest::saylink("alliance share $item->{id} $item->{qty} $item->{charges}", 0, "ShareAlly");
+                    $share_alliance = " " . quest::saylink("alliance share $item->{id} $item->{qty} $item->{charges}", 0, "(ShareAlly)");
                 }
                 $modification_links .= $share_alliance;
             }
@@ -1598,7 +1598,7 @@ if ($item->{is_depositor}) {
                 }
             }
             
-            $client->Message(315, "- $item_link: $item->{qty}$item->{augment_display}$item->{attuned_display} [ID: $item->{id}] ($w1) $wstack ($wall)$share_account_link$share_alliance_link");
+            $client->Message(315, "- $item_link: $item->{qty}$item->{augment_display}$item->{attuned_display} [ID: $item->{id}] ($w1) $wstack ($wall)$share_account_link $share_alliance_link");
         }
         $client->Message(315, "--------------------------------------------------------");
     }
@@ -1640,7 +1640,7 @@ if ($item->{is_depositor}) {
                 }
             }
             
-            $client->Message(315, "- $item_link ($charges_text): $item->{qty}$item->{augment_display}$item->{attuned_display} [ID: $item->{id}] ($w1) $wstack ($wall)$share_account_link$share_alliance_link");
+            $client->Message(315, "- $item_link ($charges_text): $item->{qty}$item->{augment_display}$item->{attuned_display} [ID: $item->{id}] ($w1) $wstack ($wall)$share_account_link $share_alliance_link");
         }
         $client->Message(315, "--------------------------------------------------------");
     }
