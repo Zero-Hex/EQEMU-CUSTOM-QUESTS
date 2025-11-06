@@ -1,9 +1,5 @@
-# Filename: auction_master.pl
-# Location: [EQEMU_Root]/quests/global/
-# Authored by Zerohex
-# =========================================================================
-# Auction Master NPC Controller (Not Required)
-# =========================================================================
+# auction_master.pl
+
 # Constants (Must match constants in auction.pl)
 my $CURRENCY_ITEM_ID = 147623;
 my $GM_MIN_LEVEL_ADMIN = 200; 
@@ -26,8 +22,9 @@ sub EVENT_SPAWN {
 
 sub EVENT_TIMER {
     if ($timer eq "AUCTION_CHECK") {
+        # ✅ Correctly calls auction::CheckExpiredAuctions() for automation.
         if (defined(&auction::CheckExpiredAuctions)) {
-        auction::CheckExpiredAuctions();
+             auction::CheckExpiredAuctions();
         }
     }
 }
@@ -42,7 +39,7 @@ sub EVENT_SAY {
     # NPC link click: Auction Status
     if ($text =~ /^auctionlink_(\w+)$/i) {
         my $auction_name = $1;
-        # Since CheckAuctionStatus is now a public plugin function, we call it
+        # ✅ Correctly calls the status function from the core engine.
         auction::CommandCheckStatus($client, $auction_name);
         return;
     }
@@ -52,7 +49,7 @@ sub EVENT_SAY {
         my $auction_name = $1;
         my $bid_amount_int = $2; 
         
-        # Call the core bidding logic defined in the plugin.
+        # ✅ Correctly calls the ProcessSmartBid logic from the core engine.
         auction::ProcessSmartBid($client, $auction_name, $bid_amount_int);
         return;
     }
@@ -85,6 +82,31 @@ sub EVENT_SAY {
             quest::whisper("Greetings, $name. Active auctions: $list. Click an auction name to view item details and bid.");
         } else {
             quest::whisper("Greetings, $name. There are no active auctions at this time.");
+        }
+    }
+}
+
+sub EVENT_SPAWN {
+    # Define the timer interval: 900 seconds = 15 minutes.
+    my $CHECK_INTERVAL = 900; 
+    
+    # Start the perpetual timer immediately when the NPC spawns (i.e., when the zone loads).
+    quest::settimer("auction_check_timer", $CHECK_INTERVAL); 
+    
+    quest::log(5, "AUCTION CONTROLLER: Auction timer started. Interval: $CHECK_INTERVAL seconds.");
+}
+
+sub EVENT_TIMER {
+    if ($timer eq "auction_check_timer") {
+        
+        # 1. Check for and finalize any expired auctions (Core logic in auction.pl).
+        if (defined(&auction::CheckExpiredAuctions)) {
+            auction::CheckExpiredAuctions();
+        }
+        
+        # 2. Start new automated auctions if the active count is low (Automation logic in auction_automation.pl).
+        if (defined(&auction_automation::RunAutomatedAuctionCheck)) {
+            auction_automation::RunAutomatedAuctionCheck();
         }
     }
 }

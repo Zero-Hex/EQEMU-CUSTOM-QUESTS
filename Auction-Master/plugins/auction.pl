@@ -1,13 +1,8 @@
 package auction;
-# Filename: auction.pl
-# Location: [EQEMU_Root]/quests/plugins/
-# Authored by Zerohex
-# =========================================================================
-# Auction System Controls
-# =========================================================================
+#Authored by Zerohex
 # Constants (Must match constants in auction_master.pl)
-my $CURRENCY_ITEM_ID = 147623; #What Alt Currency Do You want to use for Bidding
-my $GM_MIN_LEVEL_ADMIN = 200; #Min GM level To create, end, or delete auctions.
+my $CURRENCY_ITEM_ID = 147623; 
+my $GM_MIN_LEVEL_ADMIN = 200; 
 my $AUCTION_LIST_KEY = "AUCTION_LIST_NAMES"; 
 my $AUCTION_TIMEOUT_DAYS = 90; 
 my $DEFAULT_MIN_INCREMENT = 1; 
@@ -15,6 +10,9 @@ my $DEFAULT_MIN_INCREMENT = 1;
 # Time Constants for Anti-Sniping Feature (in seconds)
 my $SNIPE_WINDOW = 90;   
 my $TIME_EXTENSION = 60; 
+
+# RESTORED: Buy It Now Price Constant
+my $STATIC_BUY_IT_NOW_PRICE = 350;
 
 # --- Utility Functions ---
 
@@ -41,7 +39,7 @@ sub ConvertSecondsToTime {
 }
 
 # -------------------------------------------------------------------------------------------------
-# AUCTION STATE MANAGEMENT LOGIC (Moved from auction_master.pl)
+# AUCTION STATE MANAGEMENT LOGIC
 # -------------------------------------------------------------------------------------------------
 
 sub UpdateActiveAuctionList {
@@ -66,20 +64,28 @@ sub UpdateActiveAuctionList {
     }
 }
 
+# 🔑 FIX 1: Added $is_bin_purchase flag to skip the worldwide message for BIN
 sub FinalizeAuction {
-    my ($auction_name, $item_id, $winner_id, $winning_bid) = @_;
+    my ($auction_name, $item_id, $winner_id, $winning_bid, $override_winner_name, $is_bin_purchase) = @_;
     my $auction_key = GetAuctionDataKey($auction_name);
     
     my $item_link = quest::varlink($item_id); 
     my $currency_name = GetCurrencyName();
     
     my $auction_data = quest::get_data($auction_key);
-    my ($data_item_id, $data_end_time, $data_current_bid, $data_current_winner_id, $data_gm_name, $min_bid) = split /\|/, $auction_data;
+    # RESTORED: Correctly define 8 variables for data consistency
+    my ($data_item_id, $data_end_time, $data_current_bid, $data_current_winner_id, $data_gm_name, $min_bid, $set_increment, $bin_price) = split /\|/, $auction_data;
     
     my $timestamp = localtime(time());
     
     if ($winner_id > 0) {
-        my $winner_name = quest::get_data("bidder\_$winner_id\_$auction_name") || "Unknown Player";
+        my $winner_name = $override_winner_name;
+        
+        unless ($winner_name) {
+             # Normal auction end, look up name from QGlobal key
+             $winner_name = quest::get_data("bidder\_$winner_id\_$auction_name") || "Unknown Player";
+        }
+        
         my $item_name = quest::getitemname($item_id);
         
         # Log: WINNER
@@ -95,7 +101,10 @@ sub FinalizeAuction {
             note      => "Winning item from '$auction_name' auction with $winning_bid $currency_name."
         });
         
-        quest::worldwidemessage(261, "The auction for $item_link has ended! Congratulations to $winner_name (Winning Bid: $winning_bid $currency_name). The item has been sent to your parcel box.");
+        # 🔑 FIX 2: Only send the worldwide message if it's NOT a BIN purchase.
+        unless ($is_bin_purchase) {
+            quest::worldwidemessage(261, "The auction for $item_link has ended! Congratulations to $winner_name (Winning Bid: $winning_bid $currency_name). The item has been sent to your parcel box.");
+        }
         
         quest::delete_data("bidder\_$winner_id\_$auction_name"); 
     } else {
@@ -118,13 +127,12 @@ sub ForceEndAuction {
     my $currency_name = GetCurrencyName();
     
     if (!$auction_data) {
-        # This function is called internally or by a remote GM, so we use quest::log 
-        # instead of $client->Message, as we don't have a client object here.
         quest::log(5, "ERROR: ForceEndAuction called on inactive auction: $auction_name");
         return;
     }
 
-    my ($item_id, $end_time, $current_bid, $current_winner_id, $gm_name, $min_bid) = split /\|/, $auction_data;
+    # RESTORED: Correctly define 8 variables for data consistency
+    my ($item_id, $end_time, $current_bid, $current_winner_id, $gm_name, $min_bid, $set_increment, $bin_price) = split /\|/, $auction_data;
     my $timestamp = localtime(time()); 
     
     if ($is_delete) {
@@ -150,7 +158,7 @@ sub ForceEndAuction {
         quest::delete_data($auction_key);
     } else {
         # --- NORMAL ENDING LOGIC (Finalize Auction) ---
-        FinalizeAuction($auction_name, $item_id, $current_winner_id, $current_bid);
+        FinalizeAuction($auction_name, $item_id, $current_winner_id, $current_bid, undef, 0); # Passed 0 for $is_bin_purchase
     }
 }
 
@@ -168,7 +176,8 @@ sub CheckExpiredAuctions {
         my $auction_data = quest::get_data($auction_key);
         next unless $auction_data;
         
-        my ($item_id, $end_time, $current_bid, $current_winner_id, $gm_name, $min_bid) = split /\|/, $auction_data;
+        # RESTORED: Correctly define 8 variables for data consistency
+        my ($item_id, $end_time, $current_bid, $current_winner_id, $gm_name, $min_bid, $set_increment, $bin_price) = split /\|/, $auction_data;
         
         if ($current_time >= $end_time) {
             # Call the plugin's logic for finalizing
@@ -182,7 +191,6 @@ sub CheckExpiredAuctions {
 sub ProcessSmartBid {
     my ($client, $auction_name, $bid_amount) = @_;
     
-    # ... (ProcessSmartBid logic remains unchanged: checks, deduction, return, anti-snipe) ...
     my $auction_key = GetAuctionDataKey($auction_name);
     my $auction_data = quest::get_data($auction_key);
     my $currency_name = GetCurrencyName();
@@ -201,7 +209,8 @@ sub ProcessSmartBid {
     }
     
     # 2. PROCESS BID LOGIC 
-    my ($item_id, $end_time, $current_bid, $current_winner_id, $gm_name, $min_bid, $set_increment) = split /\|/, $auction_data;
+    # RESTORED: Correctly define 8 variables for data consistency
+    my ($item_id, $end_time, $current_bid, $current_winner_id, $gm_name, $min_bid, $set_increment, $bin_price) = split /\|/, $auction_data;
     
     my $effective_increment = $set_increment || $DEFAULT_MIN_INCREMENT;
     my $min_legal_bid = ($current_bid == 0) ? $min_bid : ($current_bid + $effective_increment);
@@ -259,7 +268,8 @@ sub ProcessSmartBid {
     # 5. Update auction data (Uses the potentially extended $end_time)
     $current_bid = $bid_amount;
     
-    my $new_auction_data = "$item_id|$end_time|$current_bid|$new_winner_id|$gm_name|$min_bid|$set_increment";
+    # RESTORED: Saving 8 fields consistently
+    my $new_auction_data = "$item_id|$end_time|$current_bid|$new_winner_id|$gm_name|$min_bid|$set_increment|$bin_price";
     
     quest::set_data($auction_key, $new_auction_data, $AUCTION_TIMEOUT_DAYS * 86400);
     quest::set_data("bidder\_$new_winner_id\_$auction_name", $winner_name, $AUCTION_TIMEOUT_DAYS * 86400);
@@ -272,10 +282,11 @@ sub ProcessSmartBid {
 # PUBLIC GM COMMANDS (Used by global_player.pl)
 # -------------------------------------------------------------------------------------------------
 
+
 sub CommandGMHelp {
     my $client = shift;
     $client->Message(315, "--- REMOTE GM AUCTION COMMANDS ---");
-    $client->Message(315, "1. Start: !auction start [name] [item id] [hours] [min bid] [OPT: increment]");
+    $client->Message(315, "1. Start: !auction start [name] [item id] [hours] [min bid] [OPT: increment] [OPT: bin price]");
     $client->Message(315, "2. End: !auction end [name] (Finalizes auction)");
     $client->Message(315, "3. Delete: !auction delete [name] (Cancels and returns coins)");
 }
@@ -302,14 +313,17 @@ sub CommandStartAuction {
 
     my $current_time = time();
     my $end_time = $current_time + ($hours * 3600);
-    my $auction_data = "$item_id|$end_time|0|0|$name|$min_bid|$set_increment";
+    my $bin_price = $STATIC_BUY_IT_NOW_PRICE; # Use the defined static BIN price
+
+    # RESTORED: Saving 8 fields consistently: item_id|end_time|current_bid|current_winner_id|gm_name|min_bid|set_increment|bin_price
+    my $auction_data = "$item_id|$end_time|0|0|$name|$min_bid|$set_increment|$bin_price";
     my $item_link = quest::varlink($item_id);
 
     quest::set_data($auction_key, $auction_data, $AUCTION_TIMEOUT_DAYS * 86400); 
     UpdateActiveAuctionList($auction_name, 1);
     
-    quest::worldwidemessage(261, "GM $name has started a new auction for $item_link! Min bid: $min_bid $currency_name. Min Increment: $set_increment. Auction Key: '$auction_name'.");
-    $client->Message(315, "Successfully started auction: $auction_name.");
+    quest::worldwidemessage(261, "GM $name has started a new auction for $item_link! Min bid: $min_bid $currency_name. Buy It Now: $bin_price $currency_name. Min Increment: $set_increment. Auction Key: '$auction_name'.");
+    $client->Message(315, "Successfully started auction: $auction_name. BIN Price: $bin_price.");
 }
 
 sub CommandEndAuction {
@@ -364,7 +378,6 @@ sub ListActiveAuctions {
     if (scalar @active_auctions > 0) {
         $client->Message(315, "--- Active Auctions ---");
         
-        # ... (ListActiveAuctions logic remains unchanged) ...
         foreach my $auction_name (@active_auctions) {
             next if $auction_name eq '';
             
@@ -396,6 +409,48 @@ sub CommandRemoteBid {
     ProcessSmartBid($client, $auction_name, $bid_amount);
 }
 
+# RESTORED: CommandBuyItNow Logic
+sub CommandBuyItNow {
+    my ($client, $auction_name) = @_;
+    my $auction_key = GetAuctionDataKey($auction_name);
+    my $auction_data = quest::get_data($auction_key);
+    my $currency_name = GetCurrencyName();
+
+    my $player_id = $client->CharacterID() || 0; 
+    my $player_name = $client->GetName() || "Unknown Player"; 
+    
+    if (!$auction_data) {
+        $client->Message(315, "Error: Auction '$auction_name' is not currently active.");
+        return;
+    }
+    
+    # Parsing 8 fields:
+    my ($item_id, $end_time, $current_bid, $current_winner_id, $gm_name, $min_bid, $set_increment, $bin_price) = split /\|/, $auction_data;
+    
+    if ($bin_price <= 0) {
+        $client->Message(315, "Error: This auction does not have a Buy It Now price set.");
+        return;
+    }
+    
+    if ($client->CountItem($CURRENCY_ITEM_ID) < $bin_price) {
+        $client->Message(315, "You need $bin_price $currency_name to Buy It Now. You only have " . $client->CountItem($CURRENCY_ITEM_ID) . ".");
+        return;
+    }
+    
+    quest::removeitem($CURRENCY_ITEM_ID, $bin_price);
+    $client->Message(315, "Deducted $bin_price $currency_name for Buy It Now.");
+    
+    # 🔑 FIX 3: Call FinalizeAuction with 1 (true) for $is_bin_purchase flag
+    # This prevents FinalizeAuction from sending its general worldwide message.
+    FinalizeAuction($auction_name, $item_id, $player_id, $bin_price, $player_name, 1); 
+    
+    my $item_link = quest::varlink($item_id);
+    # This remains the single worldwide message for BIN.
+    quest::worldwidemessage(261, "$player_name has purchased $item_link from auction using Buy It Now for $bin_price $currency_name! The auction has ended.");
+    $client->Message(315, "Buy It Now complete! The item has been sent to your parcel box.");
+}
+
+
 sub CommandCheckStatus {
     my ($client, $auction_name) = @_;
     
@@ -407,8 +462,8 @@ sub CommandCheckStatus {
         $client->Message(315, "Auction '$auction_name' is not currently active.");
         return;
     }
-    # ... (CommandCheckStatus logic remains unchanged) ...
-    my ($item_id, $end_time, $current_bid, $current_winner_id, $gm_name, $min_bid, $set_increment) = split /\|/, $auction_data;
+    # RESTORED: Correctly define 8 variables for data consistency
+    my ($item_id, $end_time, $current_bid, $current_winner_id, $gm_name, $min_bid, $set_increment, $bin_price) = split /\|/, $auction_data;
     
     my $effective_increment = $set_increment || $DEFAULT_MIN_INCREMENT;
     my $item_link = quest::varlink($item_id);
@@ -433,6 +488,18 @@ sub CommandCheckStatus {
     
     my $base_next_bid = ($current_bid == 0) ? $min_bid : ($current_bid + $effective_increment);
     $client->Message(315, "-----------------");
+    
+    # BIN Display and Link
+    if ($bin_price > 0) {
+        $client->Message(315, "Buy It Now Price: $bin_price $currency_name");
+        my $bin_link = quest::saylink(
+            "!bin $auction_name", 
+            0,                                   
+            "Click here to Buy It Now ($bin_price $currency_name)" 
+        );
+        $client->Message(315, $bin_link);
+        $client->Message(315, "-----------------");
+    }
     
     my $bid_link = quest::saylink(
         "!bid $auction_name $base_next_bid", 
