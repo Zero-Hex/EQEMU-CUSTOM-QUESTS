@@ -223,7 +223,7 @@ sub DepositItem {
     if ($max_charges == 0) {
         $item_charges = 0;
     }
-    
+=begin  
 $client->Message(315, "--- DEPOSIT DEBUG ---");
     $client->Message(315, "HAS AUGMENTS: $has_augments");
     $client->Message(315, "IS ATTUNED: $is_attuned");
@@ -231,7 +231,7 @@ $client->Message(315, "--- DEPOSIT DEBUG ---");
     $client->Message(315, "IS HEIRLOOM: $is_heirloom");
     $client->Message(315, "---------------------");
     # --- END DEBUG CODE ---
-    
+=cut
     # --- 2. DETERMINE FLAGS (New Rules) ---
     my $alliance_item = 0;
     my $account_item = 0;
