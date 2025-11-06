@@ -35,7 +35,7 @@ my $PERMISSION_MEMBER = 3;
 # ACCESS CONTROL CONFIGURATION
 # =========================================================================
 # Restrict banker access during testing phase
-my @ALLOWED_ACCOUNTS = (192, 350, 228, 402, 309, 333, 508, 481); # Accounts that can use the NPC for testing/admin
+my @ALLOWED_ACCOUNTS = (192, 350, 228, 402, 309, 333, 508, 481, 420, 437    ); # Accounts that can use the NPC for testing/admin
 my $MIN_GM_STATUS = 100;          # Minimum Admin() status to use the NPC
 
 # To disable access control and open to all players, set this to 1
@@ -2597,6 +2597,100 @@ sub RestrictAllAllianceItem {
     RestrictAllianceItem($item_id, $total_quantity, $charges);
 }
 
+sub AllianceItemTransfer {
+    my ($item_id, $charges, $target_name) = @_;
+    unless (CheckAlliancePermission($PERMISSION_OFFICER)) {
+        quest::say("You must be an alliance Officer or Owner to transfer alliance items.");
+        return;
+    }
+    
+    my $alliance_id = GetAllianceID();
+    unless ($alliance_id) {
+        quest::say("You are not currently in an alliance.");
+        return;
+    }
+    
+    my $target_char_id = GetCharacterIDByName($target_name);
+    unless ($target_char_id) {
+        quest::say("Target character '$target_name' not found.");
+        return;
+    }
+    
+    # **2. Check if the target is in the alliance (CORRECTED FETCH METHOD)**
+    my $is_in_alliance = 0;
+    my $db = Database::new(Database::Content); 
+    
+    # Use 'character_id' for the alliance member table lookup (as previously diagnosed)
+    my $query = $db->prepare("SELECT 1 FROM $TABLE_ALLIANCE_MEMBERS WHERE alliance_id = ? AND character_id = ?");
+    $query->execute($alliance_id, $target_char_id);
+    
+    # CORRECTED: Use fetch_hashref() as demonstrated in UnrestrictAllianceItem
+    my $row = $query->fetch_hashref(); 
+    
+    if ($row) {
+        $is_in_alliance = 1;
+    }
+    
+    $query->close();
+
+    unless ($is_in_alliance) {
+        $db->close(); # Close connection since we are returning
+        quest::say("Character '$target_name' is not a member of your alliance.");
+        return;
+    }
+    my $target_account_id = GetAccountIDByCharacter($target_char_id);
+
+    my $update_query = $db->prepare(
+        "UPDATE $TABLE_BANKER SET char_id = ?, account_id = ?, restricted_to_character_id = ? 
+         WHERE item_id = ? AND charges = ? AND alliance_id = ? AND alliance_item = 1 AND char_id != 0 AND char_id != ?"
+    );
+    $update_query->execute($target_char_id, $target_account_id, $target_char_id, $item_id, $charges, $alliance_id, $target_char_id); 
+    
+    $update_query->close();
+    MergeDuplicateStacks($db, $target_char_id);
+    $db->close(); # Close the database connection once all work is complete
+    $item_link = quest::varlink($item_id, $charges);
+    quest::say("$item_link has been transferred to $target_name restricted section.");
+    
+    
+
+}
+
+sub MergeDuplicateStacks {
+    my ($db, $char_id) = @_;
+
+    # 1) Merge quantities of duplicate stacks
+    my $merge_update_sql = qq{
+        UPDATE $TABLE_BANKER AS b1
+        JOIN $TABLE_BANKER AS b2
+          ON b1.char_id = b2.char_id
+          AND b1.item_id = b2.item_id
+          AND b1.charges = b2.charges
+          AND b1.alliance_item = 1
+          AND b1.id < b2.id
+        SET b1.quantity = b1.quantity + b2.quantity
+        WHERE b1.char_id = ?
+    };
+    my $stmt = $db->prepare($merge_update_sql);
+    $stmt->execute($char_id);
+    $stmt->close();   # <-- use close() instead of finish()
+
+    # 2) Delete duplicate rows (keep the lowest id)
+    my $merge_delete_sql = qq{
+        DELETE b2 FROM $TABLE_BANKER AS b2
+        JOIN $TABLE_BANKER AS b1
+          ON b1.char_id = b2.char_id
+          AND b1.item_id = b2.item_id
+          AND b1.charges = b2.charges
+          AND b1.alliance_item = 1
+          AND b1.id < b2.id
+        WHERE b2.char_id = ?
+    };
+    $stmt = $db->prepare($merge_delete_sql);
+    $stmt->execute($char_id);
+    $stmt->close();   # <-- close() again
+}
+
 
 # =========================================================================
 # CELESTIAL LIVE BANKER - PART 3: Alliance Management Functions
@@ -2693,7 +2787,7 @@ sub InviteToAlliance {
     my $mail_message = "Greetings!\n\n" .
                       "You have been invited to join the alliance '$alliance_name' by $char_name.\n\n" .
                       "To accept this invitation:\n" .
-                      "1. Visit any Banker NPC\n" .
+                      "1. Visit any Celestial Banker NPC\n" .
                       "2. Say: alliance join $alliance_name\n\n" .
                       "This invitation will allow you to share tradable items with all alliance members through the alliance bank.\n\n" .
                       "You can check your pending invitations by saying 'alliance status' to any Banker.\n\n" .
@@ -3281,167 +3375,60 @@ sub AllianceStatus {
         }
     }
 }
-
-# =========================================================================
-# TRANSFER ITEM TO MEMBER
-# =========================================================================
-
-sub TransferAllianceItem {
-    my ($item_id, $quantity, $charges, $target_char_name) = @_;
+sub DeclineInvitation {
+    my ($alliance_name) = @_;
     my $NPCName = "Banker";
-    
-    unless ($item_id && $quantity > 0 && $target_char_name) {
-        $client->Message(315, "$NPCName whispers to you, 'Usage: alliance transferitem <ItemID> <Quantity> <CharacterName> [Charges]'");
-        return;
-    }
-    
+
     my $client = plugin::val('$client');
     my $char_id = $client->CharacterID();
-    my $alliance_id = GetAllianceID();
-    
-    unless ($alliance_id > 0) {
-        $client->Message(315, "$NPCName whispers to you, 'You must be in an alliance.'");
+    my $char_name = $client->GetCleanName();
+
+    unless ($alliance_name) {
+        $client->Message(315, "$NPCName whispers to you, 'Usage: alliance decline <AllianceName>'");
         return;
     }
-    
-    $charges = 0 unless defined($charges);
-    
-    # Get target character ID
-    my $target_char_id = GetCharacterIDByName($target_char_name);
-    unless ($target_char_id > 0) {
-        $client->Message(315, "$NPCName whispers to you, 'Character '$target_char_name' not found.'");
-        return;
-    }
-    
-    if ($target_char_id == $char_id) {
-        $client->Message(315, "$NPCName whispers to you, 'You cannot transfer items to yourself.'");
-        return;
-    }
-    
+
     my $db = Database::new(Database::Content);
-    
-    # Check if target is in the same alliance
-    my $check_member = $db->prepare("SELECT character_id FROM $TABLE_ALLIANCE_MEMBERS WHERE alliance_id = ? AND character_id = ?");
-    $check_member->execute($alliance_id, $target_char_id);
-    my $member_row = $check_member->fetch_hashref();
-    $check_member->close();
-    
-    unless ($member_row) {
-        $client->Message(315, "$NPCName whispers to you, '$target_char_name is not in your alliance.'");
+
+    # Look up the alliance by name
+    my $alliance_query = $db->prepare("SELECT id FROM $TABLE_ALLIANCE WHERE name = ?");
+    $alliance_query->execute($alliance_name);
+    my $alliance_row = $alliance_query->fetch_hashref();
+    $alliance_query->close();
+
+    unless ($alliance_row) {
+        $client->Message(315, "$NPCName whispers to you, 'Alliance $alliance_name not found.'");
         $db->close();
         return;
     }
-    
-    # Find YOUR alliance items (shared or restricted)
-    my $find = $db->prepare("
-        SELECT id, quantity, restricted_to_character_id
-        FROM $TABLE_BANKER
-        WHERE char_id = ?
-        AND item_id = ?
-        AND charges = ?
-        AND alliance_id = ?
-        AND alliance_item = 1
-    ");
-    $find->execute($char_id, $item_id, $charges, $alliance_id);
-    
-    my $total_available = 0;
-    my @source_rows;
-    
-    while (my $row = $find->fetch_hashref()) {
-        push @source_rows, $row;
-        $total_available += $row->{quantity};
-    }
-    $find->close();
-    
-    unless ($total_available > 0) {
-        my $charge_msg = ($charges > 0) ? " with $charges charges" : "";
-        $client->Message(315, "$NPCName whispers to you, 'You do not have alliance items matching item ID $item_id$charge_msg.'");
+
+    my $alliance_id = $alliance_row->{id};
+
+    # Check if the player has a pending invitation
+    my $check_invite = $db->prepare("SELECT id FROM $TABLE_ALLIANCE_PENDING WHERE alliance_id = ? AND character_id = ?");
+    $check_invite->execute($alliance_id, $char_id);
+    my $pending = $check_invite->fetch_hashref();
+    $check_invite->close();
+
+    unless ($pending) {
+        $client->Message(315, "$NPCName whispers to you, 'You do not have a pending invitation for $alliance_name.'");
         $db->close();
         return;
     }
-    
-    if ($quantity > $total_available) {
-        $client->Message(315, "$NPCName whispers to you, 'You only have $total_available of this item available.'");
-        $db->close();
-        return;
-    }
-    
-    # Deduct from your items
-    my $remaining_to_transfer = $quantity;
-    
-    foreach my $row (@source_rows) {
-        last if $remaining_to_transfer <= 0;
-        
-        my $from_this_row = ($row->{quantity} <= $remaining_to_transfer) ? $row->{quantity} : $remaining_to_transfer;
-        my $new_qty = $row->{quantity} - $from_this_row;
-        
-        if ($new_qty > 0) {
-            my $update = $db->prepare("UPDATE $TABLE_BANKER SET quantity = ? WHERE id = ?");
-            $update->execute($new_qty, $row->{id});
-            $update->close();
-        } else {
-            my $delete = $db->prepare("DELETE FROM $TABLE_BANKER WHERE id = ?");
-            $delete->execute($row->{id});
-            $delete->close();
-        }
-        
-        $remaining_to_transfer -= $from_this_row;
-    }
-    
-    # Get target's account ID
-    my $target_account_id = GetAccountIDByCharacter($target_char_id);
-    
-    # Add to target's restricted items
-    my $find_target = $db->prepare("
-        SELECT id, quantity 
-        FROM $TABLE_BANKER
-        WHERE char_id = ?
-        AND item_id = ?
-        AND charges = ?
-        AND alliance_id = ?
-        AND alliance_item = 1
-        AND restricted_to_character_id = ?
-    ");
-    $find_target->execute($target_char_id, $item_id, $charges, $alliance_id, $target_char_id);
-    my $target_row = $find_target->fetch_hashref();
-    $find_target->close();
-    
-    if ($target_row) {
-        # Update existing restricted stack
-        my $new_qty = $target_row->{quantity} + $quantity;
-        my $update = $db->prepare("UPDATE $TABLE_BANKER SET quantity = ? WHERE id = ?");
-        $update->execute($new_qty, $target_row->{id});
-        $update->close();
-    } else {
-        # Create new restricted stack - need to copy item properties from source
-        my $get_source = $db->prepare("SELECT * FROM $TABLE_BANKER WHERE id = ?");
-        $get_source->execute($source_rows[0]->{id});
-        my $source_item = $get_source->fetch_hashref();
-        $get_source->close();
-        
-        my $insert = $db->prepare("
-            INSERT INTO $TABLE_BANKER 
-            (account_id, char_id, alliance_id, item_id, quantity, charges, attuned,
-             alliance_item, account_item, restricted_to_character_id,
-             augment_one, augment_two, augment_three, augment_four, augment_five, augment_six)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $insert->execute(
-            $target_account_id, $target_char_id, $alliance_id, $item_id, $quantity,
-            $charges, $source_item->{attuned}, $target_char_id,
-            $source_item->{augment_one}, $source_item->{augment_two}, $source_item->{augment_three},
-            $source_item->{augment_four}, $source_item->{augment_five}, $source_item->{augment_six}
-        );
-        $insert->close();
-    }
-    
+
+    # Delete the pending invitation
+    my $delete = $db->prepare("DELETE FROM $TABLE_ALLIANCE_PENDING WHERE id = ?");
+    $delete->execute($pending->{id});
+    $delete->close();
+
     $db->close();
-    
-    my $item_name = quest::getitemname($item_id);
-    my $charge_msg = ($charges > 0) ? " ($charges charges each)" : "";
-    
-    $client->Message(315, "$NPCName whispers to you, 'Transferred $quantity of $item_name$charge_msg to $target_char_name (restricted to them).'");
+
+    $client->Message(315, "$NPCName whispers to you, 'You have declined the invitation to join alliance $alliance_name.'");
+
+    quest::debug("Alliance Decline: $char_name declined invitation to $alliance_name");
 }
+
+
 # =========================================================================
 # CELESTIAL LIVE BANKER - PART 4: EVENT Handlers
 # =========================================================================
@@ -3721,6 +3708,9 @@ sub EVENT_SAY {
     elsif ($text =~ /^alliance status$/i) {
         AllianceStatus();
     }
+    elsif ($text =~ /^alliance decline (\w+)$/i) {
+    DeclineInvitation($1);
+}
     
     # ===== ALLIANCE SHARE/UNSHARE (No change to regex) =====
     elsif ($text =~ /^alliance share (\d+) (\d+) (\d+)$/i) {
@@ -3776,13 +3766,14 @@ sub EVENT_SAY {
         DisbandAlliance();
     }
     
-    # ===== ALLIANCE TRANSFER ITEM (No change to regex) =====
-    elsif ($text =~ /^alliance transferitem (\d+) (\d+) (\d+) (.+)$/i) {
-        TransferAllianceItem($1, $2, $3, $4);
+    # ===== ALLIANCE TRANSFER ITEM =====
+    elsif ($text =~ /^alliance itemtransfer (\d+) (\w+)$/i) {
+        AllianceItemTransfer($1, 0, $2);
     }
-    elsif ($text =~ /^alliance transferitem (\d+) (\d+) (.+)$/i) {
-        TransferAllianceItem($1, $2, 0, $3);
+    elsif ($text =~ /^alliance itemtransfer (\d+) (\d+) (\w+)$/i) {
+        AllianceItemTransfer($1, $2, $3);
     }
+  
     
     # --- Catch All ---
     else {
