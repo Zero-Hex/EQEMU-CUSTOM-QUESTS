@@ -5,74 +5,92 @@
 # Auction Say Controls
 # =========================================================================
 sub EVENT_SAY {
-    # --- GM COMMANDS (MUST BE CHECKED FIRST) ---
-    # 1. GM HELP COMMANDS: !auction gm, !auction help
-    if ($text eq "!auction gm" || $text eq "!auction help") {
-        if (defined(&auction::CommandGMHelp)) {
-            auction::CommandGMHelp($client);
-        }
-        return;
+# 1. Standardize and Check for '!' prefix
+    my $text = lc($text); 
+    
+    unless ($text =~ /^!/) {
+        return 0; # Not a command, let other EVENT_SAY scripts process it.
     }
     
-    # 2. GM START COMMAND: !auction start [name] [item id] [hours] [min bid] [OPT: increment]
-    if ($text =~ /^\!auction start\s+(\w+)\s+(\d+)\s+(\d+)\s+(\d+)(?:\s+(\d+))?$/) {
-        my ($auction_name, $item_id, $hours, $min_bid, $custom_increment) = ($1, $2, $3, $4, $5);
-        
-        if (defined(&auction::CommandStartAuction)) {
-            auction::CommandStartAuction($client, $auction_name, $item_id, $hours, $min_bid, $custom_increment || 0);
-        }
-        return;
-    }
-
-    # 3. GM END COMMAND: !auction end [name]
-    if ($text =~ /^\!auction end\s+(\w+)$/) {
-        my $auction_name = $1;
-        
-        if (defined(&auction::CommandEndAuction)) {
-            auction::CommandEndAuction($client, $auction_name);
-        }
-        return;
-    }
+    # --- Check for REMOTE AUCTION COMMANDS ---
     
-    # 4. GM DELETE COMMAND: !auction delete [name]
-    if ($text =~ /^\!auction delete\s+(\w+)$/) {
-        my $auction_name = $1;
+    # 1. Primary Auction Command: !auction [key] or !auction list or !auction start ...
+    if ($text =~ /^!auction\s*(.*)/) {
+        my $arg = $1;
         
-        if (defined(&auction::CommandDeleteAuction)) {
-            auction::CommandDeleteAuction($client, $auction_name);
-        }
-        return;
-    }
-    
-    # --- PLAYER COMMANDS ---
-
-    # 5. LIST COMMANDS: !auction or !auctions (Exact match)
-    if ($text eq "!auction" || $text eq "!auctions") {
-        if (defined(&auction::ListActiveAuctions)) {
+        if ($arg eq "list" || $arg eq "") {
             auction::ListActiveAuctions($client);
+            return 1;
         }
-        return;
+        
+        # --- GM Commands ---
+        if ($arg =~ /^start\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s*(\d*)/) {
+            my ($name, $item_id, $hours, $min_bid, $increment) = ($1, $2, $3, $4, $5);
+            auction::CommandStartAuction($client, $name, $item_id, $hours, $min_bid, $increment);
+            return 1;
+        } 
+        
+        elsif ($arg =~ /^end\s+(\S+)/) {
+            auction::CommandEndAuction($client, $1);
+            return 1;
+        } 
+        
+        elsif ($arg =~ /^delete\s+(\S+)/) {
+            auction::CommandDeleteAuction($client, $1);
+            return 1;
+        } 
+        
+        elsif ($arg =~ /^help/) {
+            $client->Message(315, "--- REMOTE AUCTION COMMANDS ---");
+            $client->Message(315, "1. List: !auction list (Show all active auctions)");
+            $client->Message(315, "2. Status: !auction [auction_key] (Check bid, time, and links)");
+            $client->Message(315, "3. Bid: !bid [auction_key] [amount]");
+            $client->Message(315, "4. Buy It Now: !bin [auction_key]"); 
+            
+            if ($client->GetGMStatus() >= 200) {
+                auction::CommandGMHelp($client);
+            }
+            return 1;
+        }        
+        
+        # !auction [key] (Check Status Command)
+        elsif ($arg =~ /^(\S+)$/) {
+            auction::CommandCheckStatus($client, $1);
+            return 1;
+        }
     }
 
-    
-    # 6. STATUS COMMAND: !auction [name] (General Regex - MUST COME AFTER RESERVED WORDS)
-    if ($text =~ /^\!auction\s+(\w+)$/) {
-        my $auction_name = $1;
-        if (defined(&auction::CommandCheckStatus)) {
-            auction::CommandCheckStatus($client, $auction_name);
+    # 2. Remote Bid Command: !bid [key] [amount]
+    elsif ($text =~ /^!bid\s+(\S+)\s+(\d+)/) {
+        my ($auction_name, $bid_amount) = ($1, $2);
+        if ($bid_amount > 0) {
+            auction::CommandRemoteBid($client, $auction_name, $bid_amount);
+            return 1;
         }
-        return;
+    }
+
+    # 3. Buy It Now Command: !bin [key]
+    elsif ($text =~ /^!bin\s+(\S+)/) {
+        auction::CommandBuyItNow($client, $1);
+        return 1;
     }
     
-    # 7. BID COMMAND: !bid [name] [amount]
-    if ($text =~ /^\!bid\s+(\w+)\s+(\d+)$/) {
-        my $auction_name = $1;
-        my $bid_amount = $2;
-        
-        if (defined(&auction::CommandRemoteBid)) {
-            auction::CommandRemoteBid($client, $auction_name, $bid_amount);
+    # 4. GM Maintenance Command: !autocleanup
+    elsif ($text eq "!autocleanup") {
+        my $admin_level = $client->GetGMStatus() || 0;
+        my $GM_MIN_LEVEL_ADMIN = 200; 
+
+        if ($admin_level >= $GM_MIN_LEVEL_ADMIN) {
+            # 1. Finalize expired auctions (Cleanup)
+            auction::CheckExpiredAuctions();
+            # 2. Start new auctions (Creation)
+            auction_automation::RunAutomatedAuctionCheck(); 
+            $client->Message(315, "Auction maintenance complete: Checked for expired auctions and initiated auto-auction creation.");
+            return 1;
+        } else {
+            $client->Message(315, "Unauthorized command.");
+            return 1;
         }
-        return;
     }
 }
 
