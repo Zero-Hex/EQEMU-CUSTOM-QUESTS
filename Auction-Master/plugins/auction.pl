@@ -64,7 +64,6 @@ sub UpdateActiveAuctionList {
     }
 }
 
-# 🔑 FIX 1: Added $is_bin_purchase flag to skip the worldwide message for BIN
 sub FinalizeAuction {
     my ($auction_name, $item_id, $winner_id, $winning_bid, $override_winner_name, $is_bin_purchase) = @_;
     my $auction_key = GetAuctionDataKey($auction_name);
@@ -100,8 +99,6 @@ sub FinalizeAuction {
             from_name => "Remote Auction Master",
             note      => "Winning item from '$auction_name' auction with $winning_bid $currency_name."
         });
-        
-        # 🔑 FIX 2: Only send the worldwide message if it's NOT a BIN purchase.
         unless ($is_bin_purchase) {
             quest::worldwidemessage(261, "The auction for $item_link has ended! Congratulations to $winner_name (Winning Bid: $winning_bid $currency_name). The item has been sent to your parcel box.");
         }
@@ -409,7 +406,6 @@ sub CommandRemoteBid {
     ProcessSmartBid($client, $auction_name, $bid_amount);
 }
 
-# RESTORED: CommandBuyItNow Logic
 sub CommandBuyItNow {
     my ($client, $auction_name) = @_;
     my $auction_key = GetAuctionDataKey($auction_name);
@@ -437,15 +433,34 @@ sub CommandBuyItNow {
         return;
     }
     
+    # 1. Deduct BIN price
     quest::removeitem($CURRENCY_ITEM_ID, $bin_price);
     $client->Message(315, "Deducted $bin_price $currency_name for Buy It Now.");
     
-    # 🔑 FIX 3: Call FinalizeAuction with 1 (true) for $is_bin_purchase flag
-    # This prevents FinalizeAuction from sending its general worldwide message.
+    # 2. REFUND THE PREVIOUS HIGH BIDDER (FIX)
+    if ($current_winner_id > 0) {
+        my $previous_winner_name = quest::get_data("bidder\_$current_winner_id\_$auction_name") || "Unknown Player"; 
+        
+        # PARCEL: Return coins to previous bidder
+        quest::send_parcel({
+            name         => $previous_winner_name,
+            item_id      => $CURRENCY_ITEM_ID,
+            quantity     => $current_bid,
+            from_name    => "Remote Auction System", 
+            note         => "Auction '$auction_name' was purchased via Buy It Now. Your $current_bid $currency_name have been returned."
+        });
+
+        # Inform the previous bidder worldwide (Transparency)
+        quest::worldwidemessage(261, "ALERT: Auction '$auction_name' was purchased via Buy It Now. $previous_winner_name's high bid of $current_bid $currency_name has been refunded via parcel.");
+        
+        # Delete the old bidder key
+        quest::delete_data("bidder\_$current_winner_id\_$auction_name"); 
+    }
+    
+    # 3. Finalize the auction for the BIN buyer
     FinalizeAuction($auction_name, $item_id, $player_id, $bin_price, $player_name, 1); 
     
     my $item_link = quest::varlink($item_id);
-    # This remains the single worldwide message for BIN.
     quest::worldwidemessage(261, "$player_name has purchased $item_link from auction using Buy It Now for $bin_price $currency_name! The auction has ended.");
     $client->Message(315, "Buy It Now complete! The item has been sent to your parcel box.");
 }
