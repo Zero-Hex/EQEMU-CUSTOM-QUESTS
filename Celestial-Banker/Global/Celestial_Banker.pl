@@ -652,7 +652,7 @@ sub LeaveAlliance {
 # WITHDRAW FUNCTIONS
 # =========================================================================
 sub WithdrawItem {
-    my ($item_id, $requested_quantity, $requested_charges) = @_;
+    my ($item_id, $requested_quantity, $requested_charges, $augment_signature) = @_;
     
     my $NPCName = "Banker";
     my $client = plugin::val('$client');
@@ -671,12 +671,35 @@ sub WithdrawItem {
         $requested_quantity = 99999;
     }
     
-    # 3. FIND STORED QUANTITY - CHARACTER, ACCOUNT, AND ALLIANCE ITEMS
+    # 3. Parse augment signature if provided (format: "aug1-aug2-aug3-aug4-aug5-aug6")
+    my @target_augments = (0, 0, 0, 0, 0, 0);
+    my $has_augment_filter = 0;
+    
+    if ($augment_signature && $augment_signature ne '0-0-0-0-0-0') {
+        @target_augments = split('-', $augment_signature);
+        $has_augment_filter = 1;
+        
+        # Verify we have exactly 6 augment values
+        while (scalar(@target_augments) < 6) {
+            push @target_augments, 0;
+        }
+    }
+    
+    # 4. Build augment filter SQL
+    my $augment_filter_sql = "";
+    if ($has_augment_filter) {
+        $augment_filter_sql = "
+            AND augment_one = ? AND augment_two = ? AND augment_three = ?
+            AND augment_four = ? AND augment_five = ? AND augment_six = ?
+        ";
+    }
+    
+    # 5. FIND STORED QUANTITY - CHARACTER, ACCOUNT, AND ALLIANCE ITEMS
     my $find_items_sql = "
         SELECT id, quantity, charges, attuned, char_id, alliance_item, account_item,
                augment_one, augment_two, augment_three, augment_four, augment_five, augment_six
         FROM $TABLE_BANKER
-        WHERE item_id = ? $charge_filter_sql
+        WHERE item_id = ? $charge_filter_sql $augment_filter_sql
         AND (
             -- Character's personal items (not shared)
             (char_id = ? AND alliance_item = 0 AND account_item = 0)
@@ -691,15 +714,19 @@ sub WithdrawItem {
     ";
     
     my $q_find = $db->prepare($find_items_sql);
-    $q_find->execute(
-        $item_id, 
-        $target_charges,
-        $char_id,
-        $account_id,
-        $alliance_id,
-        $alliance_id,
-        $char_id
-    );
+    
+    # Build parameter list
+    my @params = ($item_id, $target_charges);
+    
+    # Add augment parameters if filtering
+    if ($has_augment_filter) {
+        push @params, @target_augments;
+    }
+    
+    # Add access control parameters
+    push @params, ($char_id, $account_id, $alliance_id, $alliance_id, $char_id);
+    
+    $q_find->execute(@params);
     
     my @item_stacks;
     my $total_quantity = 0;
@@ -728,7 +755,8 @@ sub WithdrawItem {
 
     unless ($total_quantity > 0) {
         my $charge_msg = ($target_charges > 0) ? " with $target_charges charges" : "";
-        $client->Message(315, "$NPCName whispers to you, 'You don't have this item$charge_msg in accessible storage.'");
+        my $aug_msg = $has_augment_filter ? " with specific augments" : "";
+        $client->Message(315, "$NPCName whispers to you, 'You don't have this item$charge_msg$aug_msg in accessible storage.'");
         $db->close();
         return;
     }
@@ -845,7 +873,6 @@ sub WithdrawItem {
     my $new_remaining = $total_quantity - $requested_quantity;
     $client->Message(315, "$NPCName whispers to you, 'Withdrew $requested_quantity of $item_name$charge_msg $source_msg. (Remaining: $new_remaining)'");
 }
-
 # =========================================================================
 # WithdrawCurrency - Withdraw platinum (from accessible pools)
 # =========================================================================
@@ -935,6 +962,54 @@ sub WithdrawCurrency {
 
 # =========================================================================
 # SHOW BALANCE
+# =========================================================================
+# =========================================================================
+# HELPER FUNCTION - Generate Withdraw Links with Augment Support
+# =========================================================================
+sub GenerateWithdrawLinks {
+    my ($item_id, $charges, $quantity, $stacksize, $augments_ref) = @_;
+    
+    my @augments = $augments_ref ? @{$augments_ref} : (0, 0, 0, 0, 0, 0);
+    my $aug_sig = join('-', @augments);
+    my $has_augs = ($aug_sig ne '0-0-0-0-0-0') ? 1 : 0;
+    
+    my %links;
+    
+    # W:1 link (SILENT)
+    if ($has_augs) {
+        $links{w1} = quest::saylink("withdraw $item_id 1 $charges $aug_sig", 1, "W:1");
+    } elsif ($charges > 0) {
+        $links{w1} = quest::saylink("withdraw $item_id 1 $charges", 1, "W:1");
+    } else {
+        $links{w1} = quest::saylink("withdraw $item_id 1", 1, "W:1");
+    }
+    
+    # W:All link (SILENT)
+    if ($has_augs) {
+        $links{wall} = quest::saylink("withdraw $item_id 0 $charges $aug_sig", 1, "W:All");
+    } elsif ($charges > 0) {
+        $links{wall} = quest::saylink("withdraw $item_id $charges", 1, "W:All");
+    } else {
+        $links{wall} = quest::saylink("withdraw $item_id", 1, "W:All");
+    }
+    
+    # W:Stack link (for stackable items) (SILENT)
+    $links{wstack} = "";
+    if ($stacksize > 1 && $quantity >= $stacksize) {
+        if ($has_augs) {
+            $links{wstack} = " " . quest::saylink("withdraw $item_id $stacksize $charges $aug_sig", 1, "(W:Stack)");
+        } elsif ($charges > 0) {
+            $links{wstack} = " " . quest::saylink("withdraw $item_id $charges $stacksize", 1, "(W:Stack)");
+        } else {
+            $links{wstack} = " " . quest::saylink("withdraw $item_id $stacksize", 1, "(W:Stack)");
+        }
+    }
+    
+    return %links;
+}
+
+# =========================================================================
+# SHOW BALANCE - UPDATED WITH AUGMENT SIGNATURE SUPPORT
 # =========================================================================
 sub ShowBalance {
     # 1. Update: Accept an optional filter argument
@@ -1080,7 +1155,8 @@ sub ShowBalance {
             attuned_display => $attuned_display,
             owner_display => $owner_display,
             has_augments => $has_augments,
-            is_attuned => ($row->{attuned}) ? 1 : 0 # <-- Flag for Attuned items
+            is_attuned => ($row->{attuned}) ? 1 : 0,
+            augments => \@augments  # Store augments for withdraw links
         };
         
         # Categorize based on flags
@@ -1123,7 +1199,7 @@ sub ShowBalance {
                 }
             }
         }
-# Alliance Shared (Public/Unrestricted items)
+        # Alliance Shared (Public/Unrestricted items)
         elsif ($row->{alliance_item}) {
             next if $row->{restricted_to_character_id} > 0;
 
@@ -1132,15 +1208,13 @@ sub ShowBalance {
                     $alliance_shared_charged{$unique_key}->{qty} += $row->{quantity};
                     if ($row->{char_id} == $char_id) {
                         $alliance_shared_charged{$unique_key}->{your_qty} = ($alliance_shared_charged{$unique_key}->{your_qty} || 0) + $row->{quantity};
-                        # FIX 1: Set the flag if the current row belongs to the client
                         $alliance_shared_charged{$unique_key}->{is_depositor} = 1; 
                     }
                 } else {
                     $alliance_shared_charged{$unique_key} = { %$item_entry };
-                    $alliance_shared_charged{$unique_key}->{is_depositor} = 0; # Initialize flag
+                    $alliance_shared_charged{$unique_key}->{is_depositor} = 0;
                     if ($row->{char_id} == $char_id) {
                         $alliance_shared_charged{$unique_key}->{your_qty} = $row->{quantity};
-                        # FIX 2: Set the flag if the current row belongs to the client
                         $alliance_shared_charged{$unique_key}->{is_depositor} = 1;
                     } else {
                         $alliance_shared_charged{$unique_key}->{your_qty} = 0;
@@ -1151,15 +1225,13 @@ sub ShowBalance {
                     $alliance_shared{$unique_key}->{qty} += $row->{quantity};
                     if ($row->{char_id} == $char_id) {
                         $alliance_shared{$unique_key}->{your_qty} = ($alliance_shared{$unique_key}->{your_qty} || 0) + $row->{quantity};
-                        # FIX 3: Set the flag if the current row belongs to the client
                         $alliance_shared{$unique_key}->{is_depositor} = 1; 
                     }
                 } else {
                     $alliance_shared{$unique_key} = { %$item_entry };
-                    $alliance_shared{$unique_key}->{is_depositor} = 0; # Initialize flag
+                    $alliance_shared{$unique_key}->{is_depositor} = 0;
                     if ($row->{char_id} == $char_id) {
                         $alliance_shared{$unique_key}->{your_qty} = $row->{quantity};
-                        # FIX 4: Set the flag if the current row belongs to the client
                         $alliance_shared{$unique_key}->{is_depositor} = 1;
                     } else {
                         $alliance_shared{$unique_key}->{your_qty} = 0;
@@ -1273,7 +1345,7 @@ sub ShowBalance {
     $client->Message(315, "$NPCName whispers to you, 'Your stored items (Click item name for info, enter ID to withdraw):'");
     $client->Message(315, "--------------------------------------------------------");
 
-    # 2. Add Filter Links
+    # Filter Links
     my $all_link = ($filter eq 'all') ? ">> ALL <<" : quest::saylink("show balance all", 0, "ALL");
     my $alliance_link = ($filter eq 'alliance') ? ">> ALLIANCE <<" : quest::saylink("show balance alliance", 0, "ALLIANCE");
     my $account_link = ($filter eq 'account') ? ">> ACCOUNT <<" : quest::saylink("show balance account", 0, "ACCOUNT");
@@ -1305,104 +1377,89 @@ sub ShowBalance {
         $client->Message(315, "--------------------------------------------------------");
     }
     
- # Alliance Shared (Uncharged) - 3. Conditional Display
-if (($filter eq 'all' || $filter eq 'alliance') && @alliance_shared_array && $alliance_id > 0) {
-    $client->Message(315, ":: ALLIANCE SHARED ITEMS (PUBLIC) ::");
-    foreach my $item (@alliance_shared_array) {
-        my $item_link = quest::varlink($item->{id});
-        my $w1 = quest::saylink("withdraw $item->{id} 1", 0, "W:1");
-        my $wall = quest::saylink("withdraw $item->{id}", 0, "W:All");
-        
-        my $wstack = "";
-        if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-            my $stack_qty = $item->{stacksize};
-            $wstack = " " . quest::saylink("withdraw $item->{id} $stack_qty", 0, "(W:Stack)");
-        }
-        
-        my $your_qty_display = "";
-        my $unshare_link = "";
-        
-# --- UNSHARE LINK LOGIC (Owner or Alliance Officer/Owner) ---
-if ($item->{your_qty} && $item->{your_qty} > 0) {
-    $your_qty_display = " [YQ: $item->{your_qty}]";
-    
-    # Only show Unshare link if the item was originally deposited by you
-    # FIX: Check the is_depositor flag instead of the non-existent char_id
-    if ($item->{is_depositor}) { 
-        my $unshare_all = quest::saylink("alliance unshare $item->{id} $item->{your_qty}", 0, "Unshare");
-        $unshare_link = " ($unshare_all)";
-    }
-}
-        
-my $restrict_links = "";
-# **NEW CHECK** using the is_depositor flag
-if ($item->{is_depositor}) {
-    my $r1 = quest::saylink("alliance restrict $item->{id} 1", 0,"R:1");
-    $restrict_links = " ($r1)";
-}
+    # Alliance Shared (Uncharged)
+    if (($filter eq 'all' || $filter eq 'alliance') && @alliance_shared_array && $alliance_id > 0) {
+        $client->Message(315, ":: ALLIANCE SHARED ITEMS (PUBLIC) ::");
+        foreach my $item (@alliance_shared_array) {
+            my $item_link = quest::varlink($item->{id});
+            
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
+            
+            my $your_qty_display = "";
+            my $unshare_link = "";
+            
+            if ($item->{your_qty} && $item->{your_qty} > 0) {
+                $your_qty_display = " [YQ: $item->{your_qty}]";
+                
+                if ($item->{is_depositor}) { 
+                    my $unshare_all = quest::saylink("alliance unshare $item->{id} $item->{your_qty}", 0, "Unshare");
+                    $unshare_link = " ($unshare_all)";
+                }
+            }
+            
+            my $restrict_links = "";
+            if ($item->{is_depositor}) {
+                my $r1 = quest::saylink("alliance restrict $item->{id} 1", 0,"R:1");
+                $restrict_links = " ($r1)";
+            }
 
-        $client->Message(315, "- $item_link: $item->{qty}$your_qty_display$item->{augment_display}$item->{attuned_display}$item->{owner_display} [ID: $item->{id}] ($w1) $wstack ($wall)$restrict_links$unshare_link");
-    }
-    $client->Message(315, "--------------------------------------------------------");
-}
-    
- # Alliance Shared Charged - 3. Conditional Display
-if (($filter eq 'all' || $filter eq 'alliance') && @alliance_shared_charged_array && $alliance_id > 0) {
-    $client->Message(315, ":: ALLIANCE SHARED CHARGED ITEMS (PUBLIC) ::");
-    foreach my $item (@alliance_shared_charged_array) {
-        my $item_link = quest::varlink($item->{id});
-        my $charges_text = ($item->{charges} == 1) ? "Charge: 1" : "Charges: $item->{charges}";
-        my $w1 = quest::saylink("withdraw $item->{id} $item->{charges} 1", 0, "W:1");
-        my $wall = quest::saylink("withdraw $item->{id} $item->{charges}", 0, "W:All");
-        
-        my $wstack = "";
-        if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-            my $stack_qty = $item->{stacksize};
-            $wstack = " " . quest::saylink("withdraw $item->{id} $item->{charges} $stack_qty", 0, "(W:Stack)");
+            $client->Message(315, "- $item_link: $item->{qty}$your_qty_display$item->{augment_display}$item->{attuned_display}$item->{owner_display} [ID: $item->{id}] ($w1) $wstack ($wall)$restrict_links$unshare_link");
         }
-        
-        my $your_qty_display = "";
-        my $unshare_link = "";
-        
-# --- UNSHARE LINK LOGIC (Owner or Alliance Officer/Owner) ---
-if ($item->{your_qty} && $item->{your_qty} > 0) {
-    $your_qty_display = " [YQ: $item->{your_qty}]";
+        $client->Message(315, "--------------------------------------------------------");
+    }
     
-    # Only show Unshare link if the item was originally deposited by you
-    # FIX: Check the is_depositor flag instead of the non-existent char_id
-    if ($item->{is_depositor}) { 
-        my $unshare_all = quest::saylink("alliance unshare $item->{id} $item->{your_qty} $item->{charges}", 0, "Unshare");
-        $unshare_link = " ($unshare_all)";
+    # Alliance Shared Charged
+    if (($filter eq 'all' || $filter eq 'alliance') && @alliance_shared_charged_array && $alliance_id > 0) {
+        $client->Message(315, ":: ALLIANCE SHARED CHARGED ITEMS (PUBLIC) ::");
+        foreach my $item (@alliance_shared_charged_array) {
+            my $item_link = quest::varlink($item->{id});
+            my $charges_text = ($item->{charges} == 1) ? "Charge: 1" : "Charges: $item->{charges}";
+            
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
+            
+            my $your_qty_display = "";
+            my $unshare_link = "";
+            
+            if ($item->{your_qty} && $item->{your_qty} > 0) {
+                $your_qty_display = " [YQ: $item->{your_qty}]";
+                
+                if ($item->{is_depositor}) { 
+                    my $unshare_all = quest::saylink("alliance unshare $item->{id} $item->{your_qty} $item->{charges}", 0, "Unshare");
+                    $unshare_link = " ($unshare_all)";
+                }
+            }
+            
+            my $restrict_links = "";
+            if ($item->{is_depositor}) {
+                my $r1 = quest::saylink("alliance restrict $item->{id} 1 $item->{charges}", 0, "R:1");
+                $restrict_links = " ($r1)";
+            }
+            
+            $client->Message(315, "- $item_link ($charges_text): $item->{qty}$your_qty_display$item->{augment_display}$item->{attuned_display}$item->{owner_display} [ID: $item->{id}] ($w1) $wstack ($wall)$restrict_links$unshare_link");
+        }
+        $client->Message(315, "--------------------------------------------------------");
     }
-}
-        
-# --- INSIDE Alliance Shared CHARGED loop ---
-my $restrict_links = "";
-# **NEW CHECK** using the is_depositor flag
-if ($item->{is_depositor}) {
-    my $r1 = quest::saylink("alliance restrict $item->{id} 1 $item->{charges}", 0, "R:1");
-    $restrict_links = " ($r1)";
-}
-        
-        $client->Message(315, "- $item_link ($charges_text): $item->{qty}$your_qty_display$item->{augment_display}$item->{attuned_display}$item->{owner_display} [ID: $item->{id}] ($w1) $wstack ($wall)$restrict_links$unshare_link");
-    }
-    $client->Message(315, "--------------------------------------------------------");
-}
-    # ALLIANCE RESTRICTED ITEMS (OTHERS' PRIVATE) - OWNER VIEW - 3. Conditional Display
+    
+    # ALLIANCE RESTRICTED ITEMS (OTHERS' PRIVATE) - OWNER VIEW
     if (($filter eq 'all' || $filter eq 'alliance') && @alliance_restricted_others_array && $alliance_id > 0 && $is_owner) {
         $client->Message(315, ":: ALLIANCE RESTRICTED ITEMS (OTHERS' PRIVATE) ::");
         $client->Message(315, ":: OWNER OVERRIDE - Use 'OWNER UNRESTRICT' to free up the item. ::");
         foreach my $item (@alliance_restricted_others_array) {
             my $item_link = quest::varlink($item->{id});
-            my $w1 = quest::saylink("withdraw $item->{id} 1", 0, "W:1");
-            my $wall = quest::saylink("withdraw $item->{id}", 0, "W:All");
             
-            my $wstack = "";
-            if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-                my $stack_qty = $item->{stacksize};
-                $wstack = " " . quest::saylink("withdraw $item->{id} $stack_qty", 0, "(W:Stack)");
-            }
-            
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
 
             my $unrestrict_all = quest::saylink("alliance unrestrictall $item->{id}", 0, "OWNER UNRESTRICT");
             my $unrestrict_link = " ($unrestrict_all)";
@@ -1418,14 +1475,12 @@ if ($item->{is_depositor}) {
         foreach my $item (@alliance_restricted_others_charged_array) {
             my $item_link = quest::varlink($item->{id});
             my $charges_text = ($item->{charges} == 1) ? "Charge: 1" : "Charges: $item->{charges}";
-            my $w1 = quest::saylink("withdraw $item->{id} $item->{charges} 1", 0, "W:1");
-            my $wall = quest::saylink("withdraw $item->{id} $item->{charges}", 0, "W:All");
             
-            my $wstack = "";
-            if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-                my $stack_qty = $item->{stacksize};
-                $wstack = " " . quest::saylink("withdraw $item->{id} $item->{charges} $stack_qty", 0, "(W:Stack)");
-            }
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
 
             my $restricted_display = " [Restricted to Char ID: $item->{restricted_char_id}]";
 
@@ -1438,67 +1493,61 @@ if ($item->{is_depositor}) {
     }
 
     
-    # Alliance Restricted (Your Private, Uncharged) - 3. Conditional Display
+    # Alliance Restricted (Your Private, Uncharged)
     if (($filter eq 'all' || $filter eq 'alliance') && @alliance_restricted_array && $alliance_id > 0) {
         $client->Message(315, ":: ALLIANCE RESTRICTED ITEMS (YOUR PRIVATE) ::");
         foreach my $item (@alliance_restricted_array) {
             my $item_link = quest::varlink($item->{id});
-            my $w1 = quest::saylink("withdraw $item->{id} 1", 0, "W:1");
-            my $wall = quest::saylink("withdraw $item->{id}", 0, "W:All");
+            
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
+            
             my $u1 = quest::saylink("alliance unrestrict $item->{id} 1", 0, "U:1");
             my $uall = quest::saylink("alliance unrestrictall $item->{id}", 0, "U:All");
-            
-            my $wstack = "";
-            if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-                my $stack_qty = $item->{stacksize};
-                $wstack = " " . quest::saylink("withdraw $item->{id} $stack_qty", 0, "(W:Stack)");
-            }
             
             $client->Message(315, "- $item_link: $item->{qty}$item->{augment_display}$item->{attuned_display} [ID: $item->{id}] ($w1) $wstack ($wall) ($u1) ($uall)");
         }
         $client->Message(315, "--------------------------------------------------------");
     }
     
-    # Alliance Restricted Charged (Your Private, Charged) - 3. Conditional Display
+    # Alliance Restricted Charged (Your Private, Charged)
     if (($filter eq 'all' || $filter eq 'alliance') && @alliance_restricted_charged_array && $alliance_id > 0) {
         $client->Message(315, ":: ALLIANCE RESTRICTED CHARGED ITEMS (YOUR PRIVATE) ::");
         foreach my $item (@alliance_restricted_charged_array) {
             my $item_link = quest::varlink($item->{id});
             my $charges_text = ($item->{charges} == 1) ? "Charge: 1" : "Charges: $item->{charges}";
-            my $w1 = quest::saylink("withdraw $item->{id} $item->{charges} 1", 0, "W:1");
-            my $wall = quest::saylink("withdraw $item->{id} $item->{charges}", 0, "W:All");
+            
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
+            
             my $u1 = quest::saylink("alliance unrestrict $item->{id} 1 $item->{charges}", 0, "U:1");
             my $uall = quest::saylink("alliance unrestrictall $item->{id} $item->{charges}", 0, "U:All");
-            
-            my $wstack = "";
-            if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-                my $stack_qty = $item->{stacksize};
-                $wstack = " " . quest::saylink("withdraw $item->{id} $item->{charges} $stack_qty", 0, "(W:Stack)");
-            }
             
             $client->Message(315, "- $item_link ($charges_text): $item->{qty}$item->{augment_display}$item->{attuned_display} [ID: $item->{id}] ($w1) $wstack ($wall) ($u1) ($uall)");
         }
         $client->Message(315, "--------------------------------------------------------");
     }
     
-    # Account-Wide Items (Uncharged) - 3. Conditional Display
+    # Account-Wide Items (Uncharged)
     if (($filter eq 'all' || $filter eq 'account') && @account_wide_array) {
         $client->Message(315, ":: ACCOUNT-WIDE ITEMS (ALL YOUR CHARACTERS) ::");
         foreach my $item (@account_wide_array) {
             my $item_link = quest::varlink($item->{id});
-            my $w1 = quest::saylink("withdraw $item->{id} 1", 0, "W:1");
-            my $wall = quest::saylink("withdraw $item->{id}", 0, "W:All");
             
-            my $wstack = "";
-            if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-                my $stack_qty = $item->{stacksize};
-                $wstack = " " . quest::saylink("withdraw $item->{id} $stack_qty", 0, "(W:Stack)");
-            }
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
             
             my $modification_links = "";
             if (exists $item->{can_modify} && $item->{can_modify} == 1) {
-  
-                
                 my $item_check_db = Database::new(Database::Content);
                 my $item_prop = $item_check_db->prepare("SELECT heirloom FROM items WHERE id = ?");
                 $item_prop->execute($item->{id});
@@ -1520,25 +1569,21 @@ if ($item->{is_depositor}) {
         $client->Message(315, "--------------------------------------------------------");
     }
     
-    # Account-Wide Charged Items (Charged) - 3. Conditional Display
+    # Account-Wide Charged Items (Charged)
     if (($filter eq 'all' || $filter eq 'account') && @account_wide_charged_array) {
         $client->Message(315, ":: ACCOUNT-WIDE CHARGED ITEMS (ALL YOUR CHARACTERS) ::");
         foreach my $item (@account_wide_charged_array) {
             my $item_link = quest::varlink($item->{id});
             my $charges_text = ($item->{charges} == 1) ? "Charge: 1" : "Charges: $item->{charges}";
-            my $w1 = quest::saylink("withdraw $item->{id} $item->{charges} 1", 0, "W:1");
-            my $wall = quest::saylink("withdraw $item->{id} $item->{charges}", 0, "W:All");
             
-            my $wstack = "";
-            if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-                my $stack_qty = $item->{stacksize};
-                $wstack = " " . quest::saylink("withdraw $item->{id} $item->{charges} $stack_qty", 0, "(W:Stack)");
-            }
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
 
             my $modification_links = "";
             if (exists $item->{can_modify} && $item->{can_modify} == 1) {
-          
-            
                 my $item_check_db = Database::new(Database::Content);
                 my $item_prop = $item_check_db->prepare("SELECT heirloom FROM items WHERE id = ?");
                 $item_prop->execute($item->{id});
@@ -1560,39 +1605,42 @@ if ($item->{is_depositor}) {
         $client->Message(315, "--------------------------------------------------------");
     }
     
-    # Character-Only Items (Uncharged) - 3. Conditional Display
+    # Character-Only Items (Uncharged)
     if (($filter eq 'all' || $filter eq 'char') && @character_only_array) {
         $client->Message(315, ":: CHARACTER-ONLY ITEMS ::");
         foreach my $item (@character_only_array) {
             my $item_link = quest::varlink($item->{id});
-            my $w1 = quest::saylink("withdraw $item->{id} 1", 0, "W:1");
-            my $wall = quest::saylink("withdraw $item->{id}", 0, "W:All");
             
-            my $wstack = "";
-            if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-                my $stack_qty = $item->{stacksize};
-                $wstack = " " . quest::saylink("withdraw $item->{id} $stack_qty", 0, "(W:Stack)");
-            }
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
 
             my $share_account_link = "";
             my $share_alliance_link = "";
             
-            # Logic: Only show sharing options if the item is NOT augmented AND NOT attuned
-            unless ($item->{has_augments} || $item->{is_attuned}) { 
-                my $share_account = quest::saylink("account share $item->{id} $item->{qty}", 0, "ShareAcct");
-                $share_account_link = " ($share_account)";
-
+            # Logic: Only show sharing options if the item is NOT augmented, NOT attuned, AND NOT no-drop
+            unless ($item->{has_augments} || $item->{is_attuned}) {
+                # Check if item is no-drop
                 my $item_check_db = Database::new(Database::Content);
-                my $item_prop = $item_check_db->prepare("SELECT heirloom FROM items WHERE id = ?");
+                my $item_prop = $item_check_db->prepare("SELECT nodrop, heirloom FROM items WHERE id = ?");
                 $item_prop->execute($item->{id});
                 my $item_flags = $item_prop->fetch_hashref();
                 $item_prop->close();
                 $item_check_db->close();
                 
+                my $is_nodrop = ($item_flags && $item_flags->{nodrop} == 0) ? 1 : 0;
                 my $is_heirloom = ($item_flags && $item_flags->{heirloom}) ? 1 : 0;
                 
-                if ($alliance_id > 0 && !$is_heirloom) {
-                    $share_alliance_link = " " . quest::saylink("alliance share $item->{id} $item->{qty}", 0, "ShareAlly");
+                # Only show sharing if item is NOT no-drop (nodrop should be 1 for tradable items)
+                unless ($is_nodrop) {
+                    my $share_account = quest::saylink("account share $item->{id} $item->{qty}", 0, "ShareAcct");
+                    $share_account_link = " ($share_account)";
+
+                    if ($alliance_id > 0 && !$is_heirloom) {
+                        $share_alliance_link = " " . quest::saylink("alliance share $item->{id} $item->{qty}", 0, "ShareAlly");
+                    }
                 }
             }
             
@@ -1601,40 +1649,43 @@ if ($item->{is_depositor}) {
         $client->Message(315, "--------------------------------------------------------");
     }
     
-    # Character-Only Charged Items (Charged) - 3. Conditional Display
+    # Character-Only Charged Items (Charged)
     if (($filter eq 'all' || $filter eq 'char') && @character_only_charged_array) {
         $client->Message(315, ":: CHARACTER-ONLY CHARGED ITEMS ::");
         foreach my $item (@character_only_charged_array) {
             my $item_link = quest::varlink($item->{id});
             my $charges_text = ($item->{charges} == 1) ? "Charge: 1" : "Charges: $item->{charges}";
-            my $w1 = quest::saylink("withdraw $item->{id} $item->{charges} 1", 0, "W:1");
-            my $wall = quest::saylink("withdraw $item->{id} $item->{charges}", 0, "W:All");
             
-            my $wstack = "";
-            if ($item->{stacksize} > 1 && $item->{qty} >= $item->{stacksize}) {
-                my $stack_qty = $item->{stacksize};
-                $wstack = " " . quest::saylink("withdraw $item->{id} $item->{charges} $stack_qty", 0, "(W:Stack)");
-            }
+            # Generate withdraw links with augment support
+            my %wlinks = GenerateWithdrawLinks($item->{id}, $item->{charges}, $item->{qty}, $item->{stacksize}, $item->{augments});
+            my $w1 = $wlinks{w1};
+            my $wall = $wlinks{wall};
+            my $wstack = $wlinks{wstack};
 
             my $share_account_link = "";
             my $share_alliance_link = "";
 
-            # Logic: Only show sharing options if the item is NOT augmented AND NOT attuned
+            # Logic: Only show sharing options if the item is NOT augmented, NOT attuned, AND NOT no-drop
             unless ($item->{has_augments} || $item->{is_attuned}) {
-                my $share_account = quest::saylink("account share $item->{id} $item->{qty} $item->{charges}", 0, "ShareAcct");
-                $share_account_link = " ($share_account)";
-
+                # Check if item is no-drop
                 my $item_check_db = Database::new(Database::Content);
-                my $item_prop = $item_check_db->prepare("SELECT heirloom FROM items WHERE id = ?");
+                my $item_prop = $item_check_db->prepare("SELECT nodrop, heirloom FROM items WHERE id = ?");
                 $item_prop->execute($item->{id});
                 my $item_flags = $item_prop->fetch_hashref();
                 $item_prop->close();
                 $item_check_db->close();
                 
+                my $is_nodrop = ($item_flags && $item_flags->{nodrop} == 0) ? 1 : 0;
                 my $is_heirloom = ($item_flags && $item_flags->{heirloom}) ? 1 : 0;
                 
-                if ($alliance_id > 0 && !$is_heirloom) {
-                    $share_alliance_link = " " . quest::saylink("alliance share $item->{id} $item->{qty} $item->{charges}", 0, "ShareAlly");
+                # Only show sharing if item is NOT no-drop (nodrop should be 1 for tradable items)
+                unless ($is_nodrop) {
+                    my $share_account = quest::saylink("account share $item->{id} $item->{qty} $item->{charges}", 0, "ShareAcct");
+                    $share_account_link = " ($share_account)";
+
+                    if ($alliance_id > 0 && !$is_heirloom) {
+                        $share_alliance_link = " " . quest::saylink("alliance share $item->{id} $item->{qty} $item->{charges}", 0, "ShareAlly");
+                    }
                 }
             }
             
@@ -1642,6 +1693,251 @@ if ($item->{is_depositor}) {
         }
         $client->Message(315, "--------------------------------------------------------");
     }
+}
+sub RestrictAllianceItemToCharacter {
+    my ($item_id, $target_char_id, $quantity, $charges) = @_;
+    my $NPCName = "Banker";
+    
+    my $PERMISSION_OWNER = plugin::val('$PERMISSION_OWNER') || 1;
+    my $TABLE_BANKER = plugin::val('$TABLE_BANKER') || "celestial_live_banker";
+    my $TABLE_ALLIANCE_MEMBERS = plugin::val('$TABLE_ALLIANCE_MEMBERS') || "celestial_live_alliance_members";
+    
+    unless ($item_id && $target_char_id) {
+        $client->Message(315, "$NPCName whispers to you, 'Usage: alliance restrict <ItemID> <TargetCharID> [Quantity] [Charges]'");
+        return;
+    }
+    
+    my $client = plugin::val('$client');
+    my $char_id = $client->CharacterID();
+    my $alliance_id = GetAllianceID();
+    
+    unless ($alliance_id > 0) {
+        $client->Message(315, "$NPCName whispers to you, 'You must be in an alliance.'");
+        return;
+    }
+    
+    $quantity = 99999 unless defined($quantity) && $quantity > 0;
+    $charges = 0 unless defined($charges);
+    
+    my $db = Database::new(Database::Content);
+    
+    # Check if user is owner or depositor of the item
+    my $is_owner = 0;
+    my $rank_query = $db->prepare("
+        SELECT permission_level 
+        FROM $TABLE_ALLIANCE_MEMBERS 
+        WHERE alliance_id = ? AND character_id = ?
+    ");
+    $rank_query->execute($alliance_id, $char_id);
+    my $member_row = $rank_query->fetch_hashref();
+    $rank_query->close();
+    
+    if ($member_row && $member_row->{permission_level} eq $PERMISSION_OWNER) {
+        $is_owner = 1;
+    }
+    
+    # Verify target character is in the alliance
+    my $target_check = $db->prepare("
+        SELECT character_id 
+        FROM $TABLE_ALLIANCE_MEMBERS 
+        WHERE alliance_id = ? AND character_id = ?
+    ");
+    $target_check->execute($alliance_id, $target_char_id);
+    my $target_exists = $target_check->fetch_hashref();
+    $target_check->close();
+    
+    unless ($target_exists) {
+        my $target_name = GetCharacterName($target_char_id);
+        $client->Message(315, "$NPCName whispers to you, 'Character $target_name (ID: $target_char_id) is not in your alliance.'");
+        $db->close();
+        return;
+    }
+    
+    # Find items that can be restricted (owner can restrict any, depositor can only restrict their own)
+    my $where_clause = $is_owner ? 
+        "alliance_id = ? AND item_id = ? AND charges = ? AND alliance_item = 1 AND (restricted_to_character_id = 0 OR restricted_to_character_id = ?)" :
+        "char_id = ? AND alliance_id = ? AND item_id = ? AND charges = ? AND alliance_item = 1 AND (restricted_to_character_id = 0 OR restricted_to_character_id = ?)";
+    
+    my @params = $is_owner ? 
+        ($alliance_id, $item_id, $charges, $char_id) :
+        ($char_id, $alliance_id, $item_id, $charges, $char_id);
+    
+    my $find = $db->prepare("SELECT id, quantity, char_id FROM $TABLE_BANKER WHERE $where_clause ORDER BY id ASC LIMIT 1");
+    $find->execute(@params);
+    my $row = $find->fetch_hashref();
+    $find->close();
+    
+    unless ($row) {
+        my $charge_msg = ($charges > 0) ? " with $charges charges" : "";
+        $client->Message(315, "$NPCName whispers to you, 'No alliance items found matching item ID $item_id$charge_msg that you can restrict.'");
+        $db->close();
+        return;
+    }
+    
+    # Limit quantity to available
+    if ($quantity > $row->{quantity}) {
+        $quantity = $row->{quantity};
+    }
+    
+    # If restricting partial quantity, split the stack
+    if ($quantity < $row->{quantity}) {
+        my $get_full_row = $db->prepare("SELECT * FROM $TABLE_BANKER WHERE id = ?");
+        $get_full_row->execute($row->{id});
+        my $full_row = $get_full_row->fetch_hashref();
+        $get_full_row->close();
+        
+        # Reduce the original stack
+        my $new_qty = $row->{quantity} - $quantity;
+        my $update_original = $db->prepare("UPDATE $TABLE_BANKER SET quantity = ? WHERE id = ?");
+        $update_original->execute($new_qty, $row->{id});
+        $update_original->close();
+        
+        # Check if restricted stack to target already exists
+        my $find_restricted = $db->prepare("
+            SELECT id, quantity 
+            FROM $TABLE_BANKER
+            WHERE char_id = ? AND item_id = ? AND charges = ? AND alliance_id = ?
+            AND alliance_item = 1 AND restricted_to_character_id = ?
+            AND augment_one = ? AND augment_two = ? AND augment_three = ?
+            AND augment_four = ? AND augment_five = ? AND augment_six = ?
+        ");
+        $find_restricted->execute(
+            $full_row->{char_id}, $item_id, $charges, $alliance_id, $target_char_id,
+            $full_row->{augment_one} || 0, $full_row->{augment_two} || 0, $full_row->{augment_three} || 0,
+            $full_row->{augment_four} || 0, $full_row->{augment_five} || 0, $full_row->{augment_six} || 0
+        );
+        my $restricted_row = $find_restricted->fetch_hashref();
+        $find_restricted->close();
+        
+        if ($restricted_row) {
+            # Add to existing restricted stack
+            my $new_restricted_qty = $restricted_row->{quantity} + $quantity;
+            my $update_restricted = $db->prepare("UPDATE $TABLE_BANKER SET quantity = ? WHERE id = ?");
+            $update_restricted->execute($new_restricted_qty, $restricted_row->{id});
+            $update_restricted->close();
+        } else {
+            # Create new restricted stack
+            my $insert_restricted = $db->prepare("
+                INSERT INTO $TABLE_BANKER 
+                (account_id, char_id, alliance_id, item_id, quantity, charges, attuned,
+                 alliance_item, account_item, restricted_to_character_id,
+                 augment_one, augment_two, augment_three, augment_four, augment_five, augment_six)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $insert_restricted->execute(
+                $full_row->{account_id}, $full_row->{char_id}, $full_row->{alliance_id},
+                $full_row->{item_id}, $quantity, $full_row->{charges}, $full_row->{attuned},
+                $full_row->{alliance_item}, $full_row->{account_item}, $target_char_id,
+                $full_row->{augment_one}, $full_row->{augment_two}, $full_row->{augment_three},
+                $full_row->{augment_four}, $full_row->{augment_five}, $full_row->{augment_six}
+            );
+            $insert_restricted->close();
+        }
+    } else {
+        # Restricting entire stack
+        my $update = $db->prepare("UPDATE $TABLE_BANKER SET restricted_to_character_id = ? WHERE id = ?");
+        $update->execute($target_char_id, $row->{id});
+        $update->close();
+    }
+    
+    $db->close();
+    
+    my $item_name = quest::getitemname($item_id);
+    my $target_name = GetCharacterName($target_char_id);
+    my $charge_msg = ($charges > 0) ? " ($charges charges each)" : "";
+    $client->Message(315, "$NPCName whispers to you, 'Restricted $quantity of $item_name$charge_msg to $target_name (ID: $target_char_id).'");
+}
+sub RestrictAllAllianceItemOwnerOnly {
+    my ($item_id, $charges) = @_;
+    my $NPCName = "Banker";
+    
+    my $PERMISSION_OWNER = plugin::val('$PERMISSION_OWNER') || 1;
+    my $TABLE_BANKER = plugin::val('$TABLE_BANKER') || "celestial_live_banker";
+    my $TABLE_ALLIANCE_MEMBERS = plugin::val('$TABLE_ALLIANCE_MEMBERS') || "celestial_live_alliance_members";
+    
+    unless ($item_id) {
+        $client->Message(315, "$NPCName whispers to you, 'Usage: alliance restrictall <ItemID> [Charges]'");
+        return;
+    }
+    
+    my $client = plugin::val('$client');
+    my $char_id = $client->CharacterID();
+    my $alliance_id = GetAllianceID();
+    
+    unless ($alliance_id > 0) {
+        $client->Message(315, "$NPCName whispers to you, 'You must be in an alliance.'");
+        return;
+    }
+    
+    # Check if user is owner
+    my $db = Database::new(Database::Content);
+    
+    my $rank_query = $db->prepare("
+        SELECT permission_level 
+        FROM $TABLE_ALLIANCE_MEMBERS 
+        WHERE alliance_id = ? AND character_id = ?
+    ");
+    $rank_query->execute($alliance_id, $char_id);
+    my $member_row = $rank_query->fetch_hashref();
+    $rank_query->close();
+    
+    unless ($member_row && $member_row->{permission_level} eq $PERMISSION_OWNER) {
+        $client->Message(315, "$NPCName whispers to you, 'Only the alliance owner can use restrictall.'");
+        $db->close();
+        return;
+    }
+    
+    $charges = 0 unless defined($charges);
+    
+    # Handle charges filtering
+    my $charges_where = ($charges > 0) ? "charges = ?" : "(charges = 0 OR charges IS NULL)";
+    my @execute_params = ($alliance_id, $item_id);
+    push @execute_params, $charges if ($charges > 0);
+    
+    # Check if any items exist to restrict
+    my $check_sql = "
+        SELECT char_id, SUM(quantity) as total_qty 
+        FROM $TABLE_BANKER 
+        WHERE alliance_id = ? AND item_id = ? AND $charges_where AND alliance_item = 1 AND restricted_to_character_id = 0
+        GROUP BY char_id
+    ";
+    my $check_query = $db->prepare($check_sql);
+    $check_query->execute(@execute_params);
+    
+    my %depositor_totals;
+    my $grand_total = 0;
+    
+    while (my $row = $check_query->fetch_hashref()) {
+        $depositor_totals{$row->{char_id}} = $row->{total_qty};
+        $grand_total += $row->{total_qty};
+    }
+    $check_query->close();
+    
+    unless ($grand_total > 0) {
+        my $charge_msg = ($charges > 0) ? " with $charges charges" : "";
+        $client->Message(315, "$NPCName whispers to you, 'No unrestricted alliance items found matching item ID $item_id$charge_msg.'");
+        $db->close();
+        return;
+    }
+    
+    # Restrict all copies - each depositor's items become restricted to them
+    my $update_sql = "
+        UPDATE $TABLE_BANKER 
+        SET restricted_to_character_id = char_id 
+        WHERE alliance_id = ? AND item_id = ? AND $charges_where AND alliance_item = 1 AND restricted_to_character_id = 0
+    ";
+    my $update_query = $db->prepare($update_sql);
+    $update_query->execute(@execute_params);
+    $update_query->close();
+    
+    $db->close();
+    
+    my $item_name = quest::getitemname($item_id);
+    my $charge_msg = ($charges > 0) ? " ($charges charges each)" : "";
+    my $depositor_count = scalar(keys %depositor_totals);
+    
+    $client->Message(315, "$NPCName whispers to you, 'Owner Restricted: All $grand_total of $item_name$charge_msg from $depositor_count depositor(s) are now private.'");
+    $client->Message(315, "$NPCName whispers to you, 'Only you (as owner) and the original depositors can withdraw these items.'");
 }
 sub SearchItems {
     my ($search_term) = @_;
@@ -3468,11 +3764,21 @@ sub EVENT_ITEM {
         
         my $item_inst = plugin::val("\$item${slot}_inst");
         
-        # Query the database for item properties including bagtype
-        my $query = $db->prepare("SELECT stacksize, maxcharges, bagtype, bagslots FROM items WHERE id = ?");
+        # Query the database for item properties including bagtype, norent (temporary flag)
+        my $query = $db->prepare("SELECT stacksize, maxcharges, bagtype, bagslots, norent FROM items WHERE id = ?");
         $query->execute($item_id);
         my $item_props = $query->fetch_hashref();
         $query->close();
+        
+        # REJECT TEMPORARY ITEMS (norent = 0)
+        my $norent = ($item_props && defined($item_props->{norent})) ? $item_props->{norent} : 1;
+        if ($norent == 0) {
+            my $item_name = quest::getitemname($item_id);
+            $client->Message(315, "$NPCName whispers to you, 'I cannot accept temporary items like $item_name. These items cannot be stored.'");
+            plugin::return_items(\%itemcount);
+            $db->close();
+            return;
+        }
         
         # REJECT BAGS/CONTAINERS - they have contents we can't track
         my $bagtype = ($item_props && $item_props->{bagtype}) ? $item_props->{bagtype} : 0;
@@ -3583,13 +3889,30 @@ sub EVENT_ITEM {
         plugin::return_items(\%itemcount);
     }
 }
-
 # =========================================================================
 # EVENT_SAY - Command parser
 # =========================================================================
 
+#!/usr/bin/perl
+# =========================================================================
+# CELESTIAL LIVE BANKER - Character-Based Banking System with Flags
+# =========================================================================
+# UPDATED VERSION with Improved User Experience
+# Features improved EVENT_SAY with tiered help system and context-aware responses
+# =========================================================================
+
+# [Previous 3895 lines remain exactly the same - only EVENT_SAY is updated]
+# For brevity, I'm showing just the updated EVENT_SAY section below
+# In production, this would be the complete file with only EVENT_SAY changed
+
+# =========================================================================
+# EVENT_SAY - UPDATED Command parser with improved UX
+# =========================================================================
+
 sub EVENT_SAY {
     my $NPCName = "Banker";
+    my $client = plugin::val('$client');
+    
     # ACCESS CONTROL CHECK
     unless (CheckAccess()) {
         $client->Message(315, "$NPCName whispers to you, 'I'm sorry, but the banking system is currently undergoing testing and is only available to authorized personnel.'");
@@ -3597,105 +3920,273 @@ sub EVENT_SAY {
         return;
     }
     
-    if ($text =~ /hail/i) {
-        $client->Message(315, "$NPCName whispers to you, 'Greetings! I can help you manage your items and alliances.'");
-        $client->Message(315, "$NPCName whispers to you, 'Say [help] for commands or [balance] to see your stored items.'");
+    # Get alliance status for context-aware help
+    my $alliance_id = GetAllianceID();
+    my $in_alliance = ($alliance_id > 0) ? 1 : 0;
+    
+    # =========================================================================
+    # GREETING & MAIN HELP
+    # =========================================================================
+    
+    if ($text =~ /^hail/i) {
+        $client->Message(315, "$NPCName whispers to you, 'Greetings, " . $client->GetCleanName() . "!'");
+        $client->Message(315, "$NPCName whispers to you, 'I manage the Celestial Banking system - a secure way to store and share items.'");
+        $client->Message(315, "---");
+        
+        my $quick_start = quest::saylink("help", 1, "Help Menu");
+        my $balance = quest::saylink("balance", 1, "View Balance");
+        my $examples = quest::saylink("help examples", 1, "See Examples");
+        
+        $client->Message(315, ":: Quick Links: ($quick_start) ($balance) ($examples) ::");
+        
+        if (!$in_alliance) {
+            my $create_link = quest::saylink("alliance create", 1, "Create Alliance");
+            $client->Message(315, ":: You're not in an alliance. ($create_link) to share items with others! ::");
+        }
     }
+    
+    # =========================================================================
+    # TIERED HELP SYSTEM
+    # =========================================================================
+    
     elsif ($text =~ /^help$/i) {
-        $client->Message(315, "=== BANKER COMMANDS ===");
-        $client->Message(315, "[balance] - View stored items");
-        $client->Message(315, "[show balance all] - View stored items");
-        $client->Message(315, "[show balance alliance] - View stored alliance items");
-        $client->Message(315, "[show balance account] - View stored account items");
-        $client->Message(315, "[show balance char] - View stored character items");
-        $client->Message(315, "[search <name>] - Search for items by name");
-        $client->Message(315, "[withdraw <ItemID>] - Withdraw items");
-        $client->Message(315, "[withdraw platinum <amount>] - Withdraw platinum");
+        $client->Message(315, "=== CELESTIAL BANKER HELP MENU ===");
+        
+        my $basic = quest::saylink("help basic", 1, "Basic Commands");
+        my $alliance = quest::saylink("help alliance", 1, "Alliance System");
+        my $advanced = quest::saylink("help advanced", 1, "Advanced Features");
+        my $examples = quest::saylink("help examples", 1, "Usage Examples");
+        
         $client->Message(315, "---");
-        $client->Message(315, "=== PLATINUM COMMANDS ===");
-        $client->Message(315, "[platinum share alliance] - Move character platinum to alliance");
-        $client->Message(315, "[platinum unshare alliance] - Move alliance platinum to account");
+        $client->Message(315, "Choose a topic:");
+        $client->Message(315, "- ($basic) - Deposit, withdraw, view items");
+        $client->Message(315, "- ($alliance) - Create & manage alliances");
+        $client->Message(315, "- ($advanced) - Sharing, restrictions, transfers");
+        $client->Message(315, "- ($examples) - Real-world usage examples");
         $client->Message(315, "---");
-        $client->Message(315, "=== ALLIANCE COMMANDS ===");
-        $client->Message(315, "[alliance] - Show alliance command list");
+        
+        my $balance = quest::saylink("balance", 1, "balance");
+        $client->Message(315, "TIP: Say ($balance) to see your stored items at any time!");
     }
-    # Balance View Filters (All remain the same)
-    elsif ($text =~ /^balance$/i) {
-        ShowBalance('all'); # Pass 'all' as default
+    
+    # BASIC HELP
+    elsif ($text =~ /^help basic$/i) {
+        $client->Message(315, "=== BASIC COMMANDS ===");
+        $client->Message(315, "---");
+        $client->Message(315, "**DEPOSITING:**");
+        $client->Message(315, "- Trade items to me to deposit them");
+        $client->Message(315, "- Trade platinum/gold/silver to deposit currency");
+        $client->Message(315, "---");
+        $client->Message(315, "**VIEWING YOUR ITEMS:**");
+        my $bal_all = quest::saylink("balance", 1, "balance");
+        my $bal_char = quest::saylink("show balance char", 1, "show balance char");
+        my $bal_acct = quest::saylink("show balance account", 1, "show balance account");
+        $client->Message(315, "- ($bal_all) - View all items");
+        $client->Message(315, "- ($bal_char) - Character-only items");
+        $client->Message(315, "- ($bal_acct) - Account-wide items");
+        $client->Message(315, "---");
+        $client->Message(315, "**WITHDRAWING:**");
+        $client->Message(315, "- Click [W:1] or [W:All] links in balance view");
+        $client->Message(315, "- Or say: withdraw <ItemID> [Quantity]");
+        $client->Message(315, "- Example: withdraw 1001 - withdraws all of item 1001");
+        $client->Message(315, "---");
+        $client->Message(315, "**SEARCHING:**");
+        my $search = quest::saylink("search sword", 1, "search sword");
+        $client->Message(315, "- ($search) - Find items by name");
+        $client->Message(315, "---");
+        
+        my $help_alliance = quest::saylink("help alliance", 1, "help alliance");
+        $client->Message(315, "Ready to share items? Say ($help_alliance)!");
     }
-    elsif($text =~ /show balance all$/i) {
+    
+    # ALLIANCE HELP
+    elsif ($text =~ /^help alliance$/i || $text =~ /^alliance$/i) {
+        $client->Message(315, "=== ALLIANCE SYSTEM ===");
+        
+        if (!$in_alliance) {
+            $client->Message(315, "You are NOT in an alliance.");
+            $client->Message(315, "---");
+            $client->Message(315, "**GETTING STARTED:**");
+            my $create = quest::saylink("alliance create MyAlliance", 1, "alliance create <Name>");
+            $client->Message(315, "- ($create) - Create new alliance");
+            $client->Message(315, "- Wait for invite, then: alliance join <Name>");
+            my $status = quest::saylink("alliance status", 1, "alliance status");
+            $client->Message(315, "- ($status) - Check pending invites");
+        } else {
+            my $status = quest::saylink("alliance status", 1, "alliance status");
+            $client->Message(315, "You are in an alliance! ($status) to view members.");
+        }
+        
+        $client->Message(315, "---");
+        $client->Message(315, "**BASIC ALLIANCE COMMANDS:**");
+        $client->Message(315, "- alliance create <Name> - Found new alliance");
+        $client->Message(315, "- alliance join <Name> - Join (needs invite)");
+        $client->Message(315, "- alliance leave - Leave current alliance");
+        $client->Message(315, "- alliance status - View members & ranks");
+        $client->Message(315, "- alliance decline <Name> - Reject invite");
+        $client->Message(315, "---");
+        $client->Message(315, "**MANAGEMENT (Officer/Owner):**");
+        $client->Message(315, "- alliance invite <CharName> - Invite player");
+        $client->Message(315, "- alliance kick <CharName> - Remove member");
+        $client->Message(315, "- alliance promote <CharName> - Make officer");
+        $client->Message(315, "- alliance demote <CharName> - Demote to member");
+        $client->Message(315, "---");
+        
+        my $help_adv = quest::saylink("help advanced", 1, "help advanced");
+        $client->Message(315, "Want to share items? Say ($help_adv)!");
+    }
+    
+    # ADVANCED HELP
+    elsif ($text =~ /^help advanced$/i) {
+        $client->Message(315, "=== ADVANCED FEATURES ===");
+        $client->Message(315, "---");
+        $client->Message(315, "**SHARING WITH ALLIANCE:**");
+        $client->Message(315, "1. Have item in Character or Account bank");
+        $client->Message(315, "2. Say: alliance share <ItemID> <Qty>");
+        $client->Message(315, "3. Item becomes available to all members!");
+        $client->Message(315, "---");
+        $client->Message(315, "**RESTRICTION SYSTEM:**");
+        $client->Message(315, "- alliance restrict <ID> <Qty> - Make private");
+        $client->Message(315, "- alliance unrestrict <ID> <Qty> - Make public");
+        $client->Message(315, "- Click [R:1] or [U:1] links in balance view");
+        $client->Message(315, "---");
+        $client->Message(315, "**PLATINUM POOLS:**");
+        $client->Message(315, "- platinum share alliance - Pool with alliance");
+        $client->Message(315, "- platinum unshare alliance - Back to account");
+        $client->Message(315, "---");
+        $client->Message(315, "**TRANSFERS (Officer+):**");
+        $client->Message(315, "- alliance itemtransfer <ID> <CharName>");
+        $client->Message(315, "- Moves items to another member");
+        $client->Message(315, "---");
+        $client->Message(315, "**OWNER POWERS:**");
+        $client->Message(315, "- alliance restrictall <ID> - Lock all copies");
+        $client->Message(315, "- alliance unrestrictall <ID> - Override unlock");
+        $client->Message(315, "- alliance transfer <Name> - Change owner");
+        $client->Message(315, "- alliance disband - Destroy alliance");
+        $client->Message(315, "---");
+        
+        my $examples = quest::saylink("help examples", 1, "help examples");
+        $client->Message(315, "See ($examples) for real usage scenarios!");
+    }
+    
+    # EXAMPLES HELP
+    elsif ($text =~ /^help examples$/i) {
+        $client->Message(315, "=== USAGE EXAMPLES ===");
+        $client->Message(315, "---");
+        $client->Message(315, "**EXAMPLE 1: Basic Deposit/Withdraw**");
+        $client->Message(315, "1. Trade me 10x Bandages");
+        $client->Message(315, "2. Say: balance");
+        $client->Message(315, "3. Click [W:All] next to Bandages to withdraw");
+        $client->Message(315, "---");
+        $client->Message(315, "**EXAMPLE 2: Create Alliance**");
+        $client->Message(315, "1. Say: alliance create Raiders");
+        $client->Message(315, "2. Say: alliance join Raiders");
+        $client->Message(315, "3. Say: alliance invite FriendName");
+        $client->Message(315, "4. Friend says: alliance join Raiders");
+        $client->Message(315, "---");
+        $client->Message(315, "**EXAMPLE 3: Share Items**");
+        $client->Message(315, "1. Deposit 20x Spider Silk (becomes Account-wide)");
+        $client->Message(315, "2. Say: balance");
+        $client->Message(315, "3. Click (ShareAlly) link next to Spider Silk");
+        $client->Message(315, "4. All alliance members can now withdraw it!");
+        $client->Message(315, "---");
+        $client->Message(315, "**EXAMPLE 4: Make Items Private**");
+        $client->Message(315, "1. Share 50x Bone Chips with alliance");
+        $client->Message(315, "2. Change your mind? Click [R:1] to restrict 1");
+        $client->Message(315, "3. Or say: alliance restrict <ItemID> 50");
+        $client->Message(315, "4. Now only you can withdraw them!");
+        $client->Message(315, "---");
+        
+        my $help = quest::saylink("help", 1, "help");
+        $client->Message(315, "Return to ($help) menu anytime!");
+    }
+    
+    # =========================================================================
+    # BALANCE & SEARCH COMMANDS
+    # =========================================================================
+    
+    elsif ($text =~ /^balance$/i || $text =~ /^show balance all$/i) {
         ShowBalance('all');
     }
-    elsif($text =~ /^show balance alliance/i) {
-        ShowBalance('alliance');
+    elsif ($text =~ /^show balance alliance$/i) {
+        if (!$in_alliance) {
+            $client->Message(315, "$NPCName whispers to you, 'You are not in an alliance.'");
+            my $help = quest::saylink("help alliance", 1, "help alliance");
+            $client->Message(315, "$NPCName whispers to you, 'Say ($help) to learn about alliances!'");
+        } else {
+            ShowBalance('alliance');
+        }
     }
-    elsif($text =~ /^show balance account/i) {
+    elsif ($text =~ /^show balance account$/i) {
         ShowBalance('account');
     }
-    elsif($text =~ /^show balance char/i) {
+    elsif ($text =~ /^show balance char$/i) {
         ShowBalance('char');
     }
-    # Add a fallback for the plain "balance" command without a filter
-    elsif ($text =~ /^(?:show )?balance$/i) {
-        ShowBalance('all');
+    elsif ($text =~ /^search (.+)$/i) {
+        my $search_term = $1;
+        if (length($search_term) < 3) {
+            $client->Message(315, "$NPCName whispers to you, 'Search term must be at least 3 characters.'");
+        } else {
+            SearchItems($search_term);
+        }
     }
-    # ===== WITHDRAW COMMANDS =====
+    
+    # =========================================================================
+    # WITHDRAW COMMANDS
+    # =========================================================================
+    
     elsif ($text =~ /^withdraw platinum (\d+)$/i) {
         WithdrawCurrency($1);
     }
+    elsif ($text =~ /^withdraw (\d+) (\d+) (\d+) ([\d\-]+)$/i) {
+        # withdraw <item_id> <quantity> <charges> <aug_sig>
+        WithdrawItem($1, $2, $3, $4);
+    }
     elsif ($text =~ /^withdraw (\d+) (\d+) (\d+)$/i) {
-        my $item_id = $1;
-        my $charges = $2;
-        my $quantity = $3;
-        WithdrawItem($item_id, $quantity, $charges);
+        WithdrawItem($1, $2, $3);
     }
     elsif ($text =~ /^withdraw (\d+) (\d+)$/i) {
-        my $item_id = $1;
-        my $quantity = $2;
-        WithdrawItem($item_id, $quantity);
+        WithdrawItem($1, $2);
     }
     elsif ($text =~ /^withdraw (\d+)$/i) {
         WithdrawItem($1, 99999);
     }
-    
-    # ===== SEARCH COMMAND =====
-    elsif ($text =~ /^search (.+)$/i) {
-        SearchItems($1);
+    elsif ($text =~ /^withdraw$/i) {
+        $client->Message(315, "$NPCName whispers to you, 'Usage: withdraw <ItemID> [Quantity]'");
+        my $balance = quest::saylink("balance", 1, "balance");
+        $client->Message(315, "$NPCName whispers to you, 'Say ($balance) and use the [W:1] or [W:All] links!'");
     }
     
-    # ===== PLATINUM SHARE COMMANDS (Account option removed) =====
-    elsif ($text =~ /^platinum share (alliance)$/i) {
-        SharePlatinum($1);
+    # =========================================================================
+    # PLATINUM COMMANDS
+    # =========================================================================
+    
+    elsif ($text =~ /^platinum share alliance$/i) {
+        if (!$in_alliance) {
+            $client->Message(315, "$NPCName whispers to you, 'You must be in an alliance to share platinum.'");
+        } else {
+            SharePlatinum('alliance');
+        }
     }
-    elsif ($text =~ /^platinum unshare (alliance)$/i) {
-        UnsharePlatinum($1);
+    elsif ($text =~ /^platinum unshare alliance$/i) {
+        if (!$in_alliance) {
+            $client->Message(315, "$NPCName whispers to you, 'You are not in an alliance.'");
+        } else {
+            UnsharePlatinum('alliance');
+        }
+    }
+    elsif ($text =~ /^platinum$/i) {
+        $client->Message(315, "$NPCName whispers to you, 'Platinum commands:'");
+        $client->Message(315, "- platinum share alliance - Pool with alliance");
+        $client->Message(315, "- platinum unshare alliance - Move to account");
+        $client->Message(315, "- withdraw platinum <amount> - Withdraw currency");
     }
     
-    # ===== ACCOUNT SHARE COMMANDS (Removed completely) =====
-    # Original 'account share' and 'account unshare' commands removed here.
+    # =========================================================================
+    # ALLIANCE MANAGEMENT
+    # =========================================================================
     
-    # ===== ALLIANCE MAIN COMMANDS (RestrictAll removed) =====
-    elsif ($text =~ /^alliance$/i) {
-        $client->Message(315, "=== ALLIANCE COMMANDS ===");
-        $client->Message(315, "[alliance create <Name>] - Create alliance");
-        $client->Message(315, "[alliance join <Name>] - Join alliance");
-        $client->Message(315, "[alliance leave] - Leave alliance");
-        $client->Message(315, "[alliance status] - View status");
-        $client->Message(315, "---");
-        $client->Message(315, "[alliance share <ID> <Qty>] - Add to alliance");
-        $client->Message(315, "[alliance unshare <ID> <Qty>] - Remove from alliance");
-        $client->Message(315, "[alliance restrict <ID> <Qty>] - Make private");
-        $client->Message(315, "[alliance unrestrict <ID> <Qty>] - Make shared");
-        $client->Message(315, "---");
-        $client->Message(315, "=== MANAGEMENT (Officers/Owner) ===");
-        $client->Message(315, "[alliance invite <CharName>]");
-        $client->Message(315, "[alliance kick <CharName>]");
-        $client->Message(315, "[alliance promote <CharName>] (Owner)");
-        $client->Message(315, "[alliance demote <CharName>] (Owner)");
-        $client->Message(315, "[alliance transfer <CharName>] (Owner)");
-        $client->Message(315, "[alliance disband] (Owner)");
-    }
-    # Alliance Management (No changes needed)
     elsif ($text =~ /^alliance create (.+)$/i) {
         CreateAlliance($1);
     }
@@ -3708,45 +4199,9 @@ sub EVENT_SAY {
     elsif ($text =~ /^alliance status$/i) {
         AllianceStatus();
     }
-    elsif ($text =~ /^alliance decline (\w+)$/i) {
-    DeclineInvitation($1);
-}
-    
-    # ===== ALLIANCE SHARE/UNSHARE (No change to regex) =====
-    elsif ($text =~ /^alliance share (\d+) (\d+) (\d+)$/i) {
-        AllianceShareItem($1, $2, $3);
+    elsif ($text =~ /^alliance decline (.+)$/i) {
+        DeclineInvitation($1);
     }
-    elsif ($text =~ /^alliance share (\d+) (\d+)$/i) {
-        AllianceShareItem($1, $2);
-    }
-    elsif ($text =~ /^alliance unshare (\d+) (\d+) (\d+)$/i) {
-        AllianceUnshareItem($1, $2, $3);
-    }
-    elsif ($text =~ /^alliance unshare (\d+) (\d+)$/i) {
-        AllianceUnshareItem($1, $2);
-    }
-    
-    # ===== ALLIANCE RESTRICT/UNRESTRICT (RestrictAll commands removed) =====
-    elsif ($text =~ /^alliance restrict (\d+) (\d+) (\d+)$/i) {
-        RestrictAllianceItem($1, $2, $3);
-    }
-    elsif ($text =~ /^alliance restrict (\d+) (\d+)$/i) {
-        RestrictAllianceItem($1, $2);
-    }
-    elsif ($text =~ /^alliance unrestrict (\d+) (\d+) (\d+)$/i) {
-        UnrestrictAllianceItem($1, $2, $3);
-    }
-    elsif ($text =~ /^alliance unrestrict (\d+) (\d+)$/i) {
-        UnrestrictAllianceItem($1, $2);
-    }
-    elsif ($text =~ /^alliance unrestrictall (\d+) (\d+)$/i) {
-        UnrestrictAllAllianceItem($1, $2);
-    }
-    elsif ($text =~ /^alliance unrestrictall (\d+)$/i) {
-        UnrestrictAllAllianceItem($1);
-    }
-    
-    # ===== ALLIANCE MANAGEMENT (No change to regex) =====
     elsif ($text =~ /^alliance invite (.+)$/i) {
         InviteToAlliance($1);
     }
@@ -3766,17 +4221,90 @@ sub EVENT_SAY {
         DisbandAlliance();
     }
     
-    # ===== ALLIANCE TRANSFER ITEM =====
-    elsif ($text =~ /^alliance itemtransfer (\d+) (\w+)$/i) {
-        AllianceItemTransfer($1, 0, $2);
+    # =========================================================================
+    # ALLIANCE SHARING
+    # =========================================================================
+    
+    elsif ($text =~ /^alliance share (\d+) (\d+) (\d+)$/i) {
+        AllianceShareItem($1, $2, $3);
     }
+    elsif ($text =~ /^alliance share (\d+) (\d+)$/i) {
+        AllianceShareItem($1, $2);
+    }
+    elsif ($text =~ /^alliance unshare (\d+) (\d+) (\d+)$/i) {
+        AllianceUnshareItem($1, $2, $3);
+    }
+    elsif ($text =~ /^alliance unshare (\d+) (\d+)$/i) {
+        AllianceUnshareItem($1, $2);
+    }
+    
+    # =========================================================================
+    # ALLIANCE RESTRICTIONS
+    # =========================================================================
+    
+    elsif ($text =~ /^alliance restrict (\d+) (\d+) (\d+) (\d+)$/i) {
+        RestrictAllianceItemToCharacter($1, $2, $3, $4);
+    }
+    elsif ($text =~ /^alliance restrict (\d+) (\d+) (\d+)$/i) {
+        RestrictAllianceItemToCharacter($1, $2, $3);
+    }
+    elsif ($text =~ /^alliance restrict (\d+) (\d+)$/i) {
+        RestrictAllianceItem($1, $2);
+    }
+    elsif ($text =~ /^alliance unrestrict (\d+) (\d+) (\d+)$/i) {
+        UnrestrictAllianceItem($1, $2, $3);
+    }
+    elsif ($text =~ /^alliance unrestrict (\d+) (\d+)$/i) {
+        UnrestrictAllianceItem($1, $2);
+    }
+    elsif ($text =~ /^alliance restrictall (\d+) (\d+)$/i) {
+        RestrictAllAllianceItemOwnerOnly($1, $2);
+    }
+    elsif ($text =~ /^alliance restrictall (\d+)$/i) {
+        RestrictAllAllianceItemOwnerOnly($1);
+    }
+    elsif ($text =~ /^alliance unrestrictall (\d+) (\d+)$/i) {
+        UnrestrictAllAllianceItem($1, $2);
+    }
+    elsif ($text =~ /^alliance unrestrictall (\d+)$/i) {
+        UnrestrictAllAllianceItem($1);
+    }
+    
+    # =========================================================================
+    # ALLIANCE TRANSFERS
+    # =========================================================================
+    
     elsif ($text =~ /^alliance itemtransfer (\d+) (\d+) (\w+)$/i) {
         AllianceItemTransfer($1, $2, $3);
     }
-  
+    elsif ($text =~ /^alliance itemtransfer (\d+) (\w+)$/i) {
+        AllianceItemTransfer($1, 0, $2);
+    }
     
-    # --- Catch All ---
+    # =========================================================================
+    # SMART ERROR HANDLING
+    # =========================================================================
+    
+    elsif ($text =~ /^alliance\s+/i) {
+        # Unrecognized alliance command
+        $client->Message(315, "$NPCName whispers to you, 'Unknown alliance command.'");
+        my $help = quest::saylink("help alliance", 1, "help alliance");
+        $client->Message(315, "$NPCName whispers to you, 'Say ($help) for available commands.'");
+    }
+    elsif ($text =~ /^help\s+/i) {
+        # Unrecognized help topic
+        $client->Message(315, "$NPCName whispers to you, 'Unknown help topic.'");
+        my $help = quest::saylink("help", 1, "help");
+        $client->Message(315, "$NPCName whispers to you, 'Say ($help) to see all topics.'");
+    }
     else {
-     #   plugin::event_say($text);
+        # Completely unrecognized command
+        if (length($text) > 2 && $text !~ /^(hail,?\s|hi|hello|hey)/i) {
+            my $help = quest::saylink("help", 1, "help");
+            my $balance = quest::saylink("balance", 1, "balance");
+            $client->Message(315, "$NPCName whispers to you, 'I don't understand that command.'");
+            $client->Message(315, "$NPCName whispers to you, 'Try ($help) or ($balance).'");
+        }
     }
 }
+
