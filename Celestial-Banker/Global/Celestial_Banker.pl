@@ -1012,13 +1012,30 @@ sub GenerateWithdrawLinks {
 # SHOW BALANCE - UPDATED WITH AUGMENT SIGNATURE SUPPORT
 # =========================================================================
 sub ShowBalance {
-    # 1. Update: Accept an optional filter argument
-    my ($filter) = @_; 
-    $filter = ($filter) || 'all'; # Default to 'all' if no filter is provided
+    # Accept optional filter arguments - NOW SUPPORTS MULTIPLE FILTERS
+    my ($filter_category, $filter_type) = @_; 
+    
+    # Parse combined filter if single argument provided
+    if (defined($filter_category) && !defined($filter_type)) {
+        # Check if it's a type filter
+        if ($filter_category eq 'weapon' || $filter_category eq 'armor' || $filter_category eq 'augment') {
+            $filter_type = $filter_category;
+            $filter_category = 'all';
+        } else {
+            # It's a category filter
+            $filter_type = 'all';
+        }
+    }
+    
+    # Default to 'all' for both if nothing provided
+    $filter_category = ($filter_category) || 'all';
+    $filter_type = ($filter_type) || 'all';
     
     my $NPCName = "Banker";
     
-    # Global Variable Lookups (Assumed to be defined in surrounding code)
+    # ... rest of the function continues ...
+    
+    # Global Variable Lookups
     my $COIN_ITEM_ID = plugin::val('$COIN_ITEM_ID') || 99990;
     my $TABLE_BANKER = plugin::val('$TABLE_BANKER') || "celestial_live_banker";
     my $TABLE_ALLIANCE_MEMBERS = plugin::val('$TABLE_ALLIANCE_MEMBERS') || "celestial_live_alliance_members";
@@ -1027,17 +1044,14 @@ sub ShowBalance {
     my $char_id = $client->CharacterID();
     my $account_id = $client->AccountID();
     
-    # Retrieves the alliance ID using the existing helper function
     my $alliance_id = GetAllianceID(); 
     
     my $db = Database::new(Database::Content);
     
     # --- ALLIANCE OWNER SETUP ---
-    # Define the owner permission level (as per CONFIGURATION section)
     my $PERMISSION_OWNER = 1; 
     my $is_owner = 0;
 
-    # Check for Alliance Owner status using a direct DB query
     if ($alliance_id > 0) {
         my $rank_query = $db->prepare("
             SELECT permission_level 
@@ -1053,32 +1067,28 @@ sub ShowBalance {
             $is_owner = 1;
         }
     }
-    # --- END OF ALLIANCE OWNER SETUP ---
 
-    # Query for all accessible items
+    # Query for all accessible items - UPDATED: Added i.slots and i.augtype
     my $sql = "
         SELECT
             sb.id, sb.item_id, sb.quantity, sb.charges, sb.attuned, sb.char_id,
             sb.alliance_id, sb.alliance_item, sb.account_item, sb.restricted_to_character_id,
             sb.augment_one, sb.augment_two, sb.augment_three, sb.augment_four, sb.augment_five, sb.augment_six,
-            i.name, i.stacksize,
+            i.name, i.stacksize, i.slots, i.augtype,
             cd.name as owner_character_name
         FROM $TABLE_BANKER sb
         LEFT JOIN items i ON sb.item_id = i.id
         LEFT JOIN character_data cd ON sb.char_id = cd.id
         WHERE sb.item_id != $COIN_ITEM_ID
         AND (
-            -- Character's personal items
             (sb.char_id = ? AND sb.alliance_item = 0 AND sb.account_item = 0)
-            -- OR Account-wide items
             OR (sb.account_id = ? AND sb.account_item = 1)
-            -- OR Alliance items accessible to you OR owner override
             OR (
                 sb.alliance_id = ? AND sb.alliance_item = 1
                 AND (
                     sb.restricted_to_character_id = 0
                     OR sb.restricted_to_character_id = ?
-                    OR ? = 1 -- OWNER OVERRIDE: Show restricted items if owner
+                    OR ? = 1
                 )
             )
         )
@@ -1086,27 +1096,52 @@ sub ShowBalance {
     ";
     
     my $query = $db->prepare($sql);
-    # Parameters: (1: char_id), (2: account_id), (3: alliance_id), (4: char_id), (5: is_owner)
     $query->execute($char_id, $account_id, $alliance_id, $char_id, $is_owner);
     
     # Categorize items
     my %alliance_shared;
     my %alliance_shared_charged;
-    my %alliance_restricted; # Restricted to THIS character
-    my %alliance_restricted_charged; # Restricted to THIS character
-    my %alliance_restricted_others; # Restricted to ANOTHER character (Owner view)
-    my %alliance_restricted_others_charged; # Restricted to ANOTHER character (Owner view)
+    my %alliance_restricted;
+    my %alliance_restricted_charged;
+    my %alliance_restricted_others;
+    my %alliance_restricted_others_charged;
     my %account_wide;
     my %account_wide_charged;
     my %character_only;
     my %character_only_charged;
     
-    while (my $row = $query->fetch_hashref()) {
-        my $item_id = $row->{item_id};
-        my $charges = $row->{charges} || 0;
+while (my $row = $query->fetch_hashref()) {
+    my $item_id = $row->{item_id};
+    my $item_slots = $row->{slots} || 0;
+    my $item_augtype = $row->{augtype} || 0;
+    my $item_name = $row->{name} || "Unknown Item";
+    
+    # --- FILTER BY ITEM TYPE (weapon/armor/augment) ---
+    if ($filter_type eq 'weapon' || $filter_type eq 'armor' || $filter_type eq 'augment') {
+        my $is_weapon = IsWeapon($item_slots);
+        my $is_armor = IsArmor($item_slots);
+        my $is_augment = IsAugment($item_augtype);
+        
+        # Skip if doesn't match the item type filter
+        my $matches_type = 0;
+        if ($filter_type eq 'weapon' && $is_weapon) {
+            $matches_type = 1;
+        } elsif ($filter_type eq 'armor' && $is_armor) {
+            $matches_type = 1;
+        } elsif ($filter_type eq 'augment' && $is_augment) {
+            $matches_type = 1;
+        }
+        
+        unless ($matches_type) {
+            next;
+        }
+    }
+    # --- END FILTER ---
+    
+    my $charges = $row->{charges} || 0;
         my $item_name = $row->{name} || "Unknown Item (ID $item_id)";
         
-        # Collect augment data (assuming external functions handle this)
+        # Collect augment data
         my @augments = (
             $row->{augment_one} || 0,
             $row->{augment_two} || 0,
@@ -1156,7 +1191,7 @@ sub ShowBalance {
             owner_display => $owner_display,
             has_augments => $has_augments,
             is_attuned => ($row->{attuned}) ? 1 : 0,
-            augments => \@augments  # Store augments for withdraw links
+            augments => \@augments
         };
         
         # Categorize based on flags
@@ -1178,7 +1213,6 @@ sub ShowBalance {
         }
         # Alliance Restricted TO OTHERS (Owner View)
         elsif ($row->{alliance_item} && $row->{restricted_to_character_id} > 0 && $row->{restricted_to_character_id} != $char_id) {
-            # Alliance restricted TO ANOTHER character (Only fetched if $is_owner = 1 in SQL)
             if ($is_owner) {
                 my $restricted_char_id = $row->{restricted_to_character_id};
 
@@ -1186,14 +1220,14 @@ sub ShowBalance {
                     if (exists $alliance_restricted_others_charged{$unique_key}) {
                         $alliance_restricted_others_charged{$unique_key}->{qty} += $row->{quantity};
                     } else {
-                        $alliance_restricted_others_charged{$unique_key} = { %$item_entry }; # Clone the entry
+                        $alliance_restricted_others_charged{$unique_key} = { %$item_entry };
                         $alliance_restricted_others_charged{$unique_key}->{restricted_char_id} = $restricted_char_id;
                     }
                 } else {
                     if (exists $alliance_restricted_others{$unique_key}) {
                         $alliance_restricted_others{$unique_key}->{qty} += $row->{quantity};
                     } else {
-                        $alliance_restricted_others{$unique_key} = { %$item_entry }; # Clone the entry
+                        $alliance_restricted_others{$unique_key} = { %$item_entry };
                         $alliance_restricted_others{$unique_key}->{restricted_char_id} = $restricted_char_id;
                     }
                 }
@@ -1283,8 +1317,6 @@ sub ShowBalance {
     
     $query->close();
     
-    # --- Platinum Query Logic (Unchanged) ---
-    
     # Get platinum from all accessible pools
     my $plat_query = $db->prepare("
         SELECT id, quantity, alliance_item, account_item, alliance_id, char_id
@@ -1341,20 +1373,31 @@ sub ShowBalance {
     my @character_only_array = sort { $a->{name} cmp $b->{name} } values %character_only;
     my @character_only_charged_array = sort { $a->{name} cmp $b->{name} || $b->{charges} <=> $a->{charges} } values %character_only_charged;
     
-    # --- Display Output ---
-    $client->Message(315, "$NPCName whispers to you, 'Your stored items (Click item name for info, enter ID to withdraw):'");
+       $client->Message(315, "$NPCName whispers to you, 'Your stored items (Click item name for info, enter ID to withdraw):'");
     $client->Message(315, "--------------------------------------------------------");
 
-    # Filter Links
-    my $all_link = ($filter eq 'all') ? ">> ALL <<" : quest::saylink("show balance all", 0, "ALL");
-    my $alliance_link = ($filter eq 'alliance') ? ">> ALLIANCE <<" : quest::saylink("show balance alliance", 0, "ALLIANCE");
-    my $account_link = ($filter eq 'account') ? ">> ACCOUNT <<" : quest::saylink("show balance account", 0, "ACCOUNT");
-    my $char_link = ($filter eq 'char') ? ">> CHARACTER <<" : quest::saylink("show balance char", 0, "CHARACTER");
+    # Category Filter Links
+    my $all_link = ($filter_category eq 'all') ? ">> ALL <<" : quest::saylink("show balance all $filter_type", 0, "ALL");
+    my $alliance_link = ($filter_category eq 'alliance') ? ">> ALLIANCE <<" : quest::saylink("show balance alliance $filter_type", 0, "ALLIANCE");
+    my $account_link = ($filter_category eq 'account') ? ">> ACCOUNT <<" : quest::saylink("show balance account $filter_type", 0, "ACCOUNT");
+    my $char_link = ($filter_category eq 'char') ? ">> CHARACTER <<" : quest::saylink("show balance char $filter_type", 0, "CHARACTER");
+    
+    # Item Type Filter Links - preserve category filter
+    my $type_all_link = ($filter_type eq 'all') ? ">> ALL <<" : quest::saylink("show balance $filter_category all", 0, "ALL");
+    my $weapon_link = ($filter_type eq 'weapon') ? ">> WEAPONS <<" : quest::saylink("show balance $filter_category weapon", 0, "WEAPONS");
+    my $armor_link = ($filter_type eq 'armor') ? ">> ARMOR <<" : quest::saylink("show balance $filter_category armor", 0, "ARMOR");
+    my $augment_link = ($filter_type eq 'augment') ? ">> AUGMENTS <<" : quest::saylink("show balance $filter_category augment", 0, "AUGMENTS");
     
     $client->Message(315, ":: FILTER VIEW: ($all_link) ($alliance_link) ($account_link) ($char_link) ::");
+    $client->Message(315, ":: ITEM TYPE: ($type_all_link) ($weapon_link) ($armor_link) ($augment_link) ::");
     $client->Message(315, "--------------------------------------------------------");
     
-    # Platinum Pools (Unchanged)
+    # Determine which categories to show based on CATEGORY filter only
+    my $show_alliance = ($filter_category eq 'all' || $filter_category eq 'alliance');
+    my $show_account = ($filter_category eq 'all' || $filter_category eq 'account');
+    my $show_char = ($filter_category eq 'all' || $filter_category eq 'char');
+    
+    # Platinum Pools
     if ($total_platinum > 0) {
         $client->Message(315, ":: PLATINUM CURRENCY ::");
         
@@ -1378,7 +1421,7 @@ sub ShowBalance {
     }
     
     # Alliance Shared (Uncharged)
-    if (($filter eq 'all' || $filter eq 'alliance') && @alliance_shared_array && $alliance_id > 0) {
+    if ($show_alliance && @alliance_shared_array && $alliance_id > 0) {
         $client->Message(315, ":: ALLIANCE SHARED ITEMS (PUBLIC) ::");
         foreach my $item (@alliance_shared_array) {
             my $item_link = quest::varlink($item->{id});
@@ -1413,7 +1456,7 @@ sub ShowBalance {
     }
     
     # Alliance Shared Charged
-    if (($filter eq 'all' || $filter eq 'alliance') && @alliance_shared_charged_array && $alliance_id > 0) {
+    if ($show_alliance && @alliance_shared_charged_array && $alliance_id > 0) {
         $client->Message(315, ":: ALLIANCE SHARED CHARGED ITEMS (PUBLIC) ::");
         foreach my $item (@alliance_shared_charged_array) {
             my $item_link = quest::varlink($item->{id});
@@ -1449,7 +1492,7 @@ sub ShowBalance {
     }
     
     # ALLIANCE RESTRICTED ITEMS (OTHERS' PRIVATE) - OWNER VIEW
-    if (($filter eq 'all' || $filter eq 'alliance') && @alliance_restricted_others_array && $alliance_id > 0 && $is_owner) {
+    if ($show_alliance && @alliance_restricted_others_array && $alliance_id > 0 && $is_owner) {
         $client->Message(315, ":: ALLIANCE RESTRICTED ITEMS (OTHERS' PRIVATE) ::");
         $client->Message(315, ":: OWNER OVERRIDE - Use 'OWNER UNRESTRICT' to free up the item. ::");
         foreach my $item (@alliance_restricted_others_array) {
@@ -1469,7 +1512,7 @@ sub ShowBalance {
         $client->Message(315, "--------------------------------------------------------");
     }
     
-    if (($filter eq 'all' || $filter eq 'alliance') && @alliance_restricted_others_charged_array && $alliance_id > 0 && $is_owner) {
+    if ($show_alliance && @alliance_restricted_others_charged_array && $alliance_id > 0 && $is_owner) {
         $client->Message(315, ":: ALLIANCE RESTRICTED CHARGED ITEMS (OTHERS' PRIVATE) ::");
         $client->Message(315, ":: OWNER OVERRIDE - Use 'OWNER UNRESTRICT' to free up the item. ::");
         foreach my $item (@alliance_restricted_others_charged_array) {
@@ -1494,7 +1537,7 @@ sub ShowBalance {
 
     
     # Alliance Restricted (Your Private, Uncharged)
-    if (($filter eq 'all' || $filter eq 'alliance') && @alliance_restricted_array && $alliance_id > 0) {
+    if ($show_alliance && @alliance_restricted_array && $alliance_id > 0) {
         $client->Message(315, ":: ALLIANCE RESTRICTED ITEMS (YOUR PRIVATE) ::");
         foreach my $item (@alliance_restricted_array) {
             my $item_link = quest::varlink($item->{id});
@@ -1514,7 +1557,7 @@ sub ShowBalance {
     }
     
     # Alliance Restricted Charged (Your Private, Charged)
-    if (($filter eq 'all' || $filter eq 'alliance') && @alliance_restricted_charged_array && $alliance_id > 0) {
+    if ($show_alliance && @alliance_restricted_charged_array && $alliance_id > 0) {
         $client->Message(315, ":: ALLIANCE RESTRICTED CHARGED ITEMS (YOUR PRIVATE) ::");
         foreach my $item (@alliance_restricted_charged_array) {
             my $item_link = quest::varlink($item->{id});
@@ -1535,7 +1578,7 @@ sub ShowBalance {
     }
     
     # Account-Wide Items (Uncharged)
-    if (($filter eq 'all' || $filter eq 'account') && @account_wide_array) {
+    if ($show_account && @account_wide_array) {
         $client->Message(315, ":: ACCOUNT-WIDE ITEMS (ALL YOUR CHARACTERS) ::");
         foreach my $item (@account_wide_array) {
             my $item_link = quest::varlink($item->{id});
@@ -1570,7 +1613,7 @@ sub ShowBalance {
     }
     
     # Account-Wide Charged Items (Charged)
-    if (($filter eq 'all' || $filter eq 'account') && @account_wide_charged_array) {
+    if ($show_account && @account_wide_charged_array) {
         $client->Message(315, ":: ACCOUNT-WIDE CHARGED ITEMS (ALL YOUR CHARACTERS) ::");
         foreach my $item (@account_wide_charged_array) {
             my $item_link = quest::varlink($item->{id});
@@ -1606,7 +1649,7 @@ sub ShowBalance {
     }
     
     # Character-Only Items (Uncharged)
-    if (($filter eq 'all' || $filter eq 'char') && @character_only_array) {
+    if ($show_char && @character_only_array) {
         $client->Message(315, ":: CHARACTER-ONLY ITEMS ::");
         foreach my $item (@character_only_array) {
             my $item_link = quest::varlink($item->{id});
@@ -1650,7 +1693,7 @@ sub ShowBalance {
     }
     
     # Character-Only Charged Items (Charged)
-    if (($filter eq 'all' || $filter eq 'char') && @character_only_charged_array) {
+    if ($show_char && @character_only_charged_array) {
         $client->Message(315, ":: CHARACTER-ONLY CHARGED ITEMS ::");
         foreach my $item (@character_only_charged_array) {
             my $item_link = quest::varlink($item->{id});
@@ -1944,7 +1987,7 @@ sub SearchItems {
     
     my $NPCName = "Banker";
     
-    # Global Variable Lookups (Matches ShowBalance)
+    # Global Variable Lookups
     my $COIN_ITEM_ID = plugin::val('$COIN_ITEM_ID') || 99990;
     my $TABLE_BANKER = plugin::val('$TABLE_BANKER') || "celestial_live_banker";
     my $TABLE_ALLIANCE_MEMBERS = plugin::val('$TABLE_ALLIANCE_MEMBERS') || "celestial_live_alliance_members";
@@ -1953,12 +1996,11 @@ sub SearchItems {
     my $char_id = $client->CharacterID();
     my $account_id = $client->AccountID();
     
-    # Retrieves the alliance ID using the existing helper function
     my $alliance_id = GetAllianceID(); 
     
     my $db = Database::new(Database::Content);
     
-    # --- ALLIANCE OWNER SETUP (Copied from ShowBalance for context) ---
+    # --- ALLIANCE OWNER SETUP ---
     my $PERMISSION_OWNER = 1; 
     my $is_owner = 0;
 
@@ -1977,18 +2019,17 @@ sub SearchItems {
             $is_owner = 1;
         }
     }
-    # --- END OF ALLIANCE OWNER SETUP ---
 
     # Prepare search term for SQL LIKE operator
     my $like_search = "%" . $search_term . "%";
 
-    # Query for all accessible items matching the search term
+    # Query for all accessible items matching the search term - UPDATED: Added i.slots and i.augtype
     my $sql = "
         SELECT
             sb.id, sb.item_id, sb.quantity, sb.charges, sb.attuned, sb.char_id,
             sb.alliance_id, sb.alliance_item, sb.account_item, sb.restricted_to_character_id,
             sb.augment_one, sb.augment_two, sb.augment_three, sb.augment_four, sb.augment_five, sb.augment_six,
-            i.name, i.stacksize,
+            i.name, i.stacksize, i.slots, i.augtype,
             cd.name as owner_character_name
         FROM $TABLE_BANKER sb
         INNER JOIN items i ON sb.item_id = i.id
@@ -1996,17 +2037,14 @@ sub SearchItems {
         WHERE sb.item_id != $COIN_ITEM_ID
         AND i.name LIKE ?
         AND (
-            -- Character's personal items
             (sb.char_id = ? AND sb.alliance_item = 0 AND sb.account_item = 0)
-            -- OR Account-wide items
             OR (sb.account_id = ? AND sb.account_item = 1)
-            -- OR Alliance items accessible to you OR owner override
             OR (
                 sb.alliance_id = ? AND sb.alliance_item = 1
                 AND (
                     sb.restricted_to_character_id = 0
                     OR sb.restricted_to_character_id = ?
-                    OR ? = 1 -- OWNER OVERRIDE: Show restricted items if owner
+                    OR ? = 1
                 )
             )
         )
@@ -2014,7 +2052,6 @@ sub SearchItems {
     ";
     
     my $query = $db->prepare($sql);
-    # Parameters: (1: search_term), (2: char_id), (3: account_id), (4: alliance_id), (5: char_id), (6: is_owner)
     $query->execute($like_search, $char_id, $account_id, $alliance_id, $char_id, $is_owner);
 
     my @results;
@@ -2101,6 +2138,77 @@ sub SearchItems {
     } else {
         $client->Message(315, "$NPCName whispers to you, 'I could not find any items matching \"$search_term\" that are accessible to you.'");
     }
+}
+# Check if item slots indicate it's a weapon
+# Weapons: Primary(13)=8192, Secondary(14)=16384, Range(11)=2048, Ammo(22)=4194304
+# Check if item slots indicate it's a weapon
+# Weapons: Primary(13)=8192, Secondary(14)=16384, Range(11)=2048, Ammo(22)=4194304
+sub IsWeapon {
+    my ($slots) = @_;
+    return 0 unless defined($slots) && $slots > 0;
+    
+    my $primary = 8192;      # Slot 13 (bit 13 = 2^13)
+    my $secondary = 16384;   # Slot 14 (bit 14 = 2^14)
+    my $range = 2048;        # Slot 11 (bit 11 = 2^11)
+    my $ammo = 4194304;      # Slot 22 (bit 22 = 2^22)
+    
+    # Check if ANY weapon slot bit is set
+    if (($slots & $primary) || ($slots & $secondary) || ($slots & $range) || ($slots & $ammo)) {
+        return 1;
+    }
+    
+    return 0;
+}
+
+# Check if item slots indicate it's armor
+# Armor: All wearable slots EXCEPT weapons (slots 0-10, 12, 15-21)
+sub IsArmor {
+    my ($slots) = @_;
+    return 0 unless defined($slots) && $slots > 0;
+    
+    # First check if it's a weapon - if so, it's NOT armor
+    if (IsWeapon($slots)) {
+        return 0;
+    }
+    
+    # Armor slot bitmasks (excluding Primary, Secondary, Range, Ammo)
+    my @armor_bitmasks = (
+        1,        # 0 - Charm
+        2,        # 1 - Ear 1
+        4,        # 2 - Head
+        8,        # 3 - Face
+        16,       # 4 - Ear 2
+        32,       # 5 - Neck
+        64,       # 6 - Shoulder
+        128,      # 7 - Arms
+        256,      # 8 - Back
+        512,      # 9 - Bracer 1
+        1024,     # 10 - Bracer 2
+        4096,     # 12 - Hands
+        32768,    # 15 - Ring 1
+        65536,    # 16 - Ring 2
+        131072,   # 17 - Chest
+        262144,   # 18 - Legs
+        524288,   # 19 - Feet
+        1048576,  # 20 - Waist
+        2097152   # 21 - Powersource
+    );
+    
+    # Check if ANY armor slot bit is set
+    foreach my $bitmask (@armor_bitmasks) {
+        if ($slots & $bitmask) {
+            return 1;
+        }
+    }
+    
+    return 0;
+}
+
+# Check if item is an augment (slots into other items)
+# Augments have augtype > 0
+sub IsAugment {
+    my ($augtype) = @_;
+    return (defined($augtype) && $augtype > 0) ? 1 : 0;
 }
 # =========================================================================
 # CELESTIAL LIVE BANKER - PART 2: Sharing & Restriction Functions
@@ -4105,24 +4213,50 @@ sub EVENT_SAY {
     # BALANCE & SEARCH COMMANDS
     # =========================================================================
     
-    elsif ($text =~ /^balance$/i || $text =~ /^show balance all$/i) {
-        ShowBalance('all');
+   # In EVENT_SAY, update the balance commands:
+
+elsif ($text =~ /^balance$/i || $text =~ /^show balance$/i) {
+    ShowBalance('all', 'all');
+}
+elsif ($text =~ /^show balance all$/i) {
+    ShowBalance('all', 'all');
+}
+elsif ($text =~ /^show balance alliance$/i) {
+    if (!$in_alliance) {
+        $client->Message(315, "$NPCName whispers to you, 'You are not in an alliance.'");
+        my $help = quest::saylink("help alliance", 1, "help alliance");
+        $client->Message(315, "$NPCName whispers to you, 'Say ($help) to learn about alliances!'");
+    } else {
+        ShowBalance('alliance', 'all');
     }
-    elsif ($text =~ /^show balance alliance$/i) {
-        if (!$in_alliance) {
-            $client->Message(315, "$NPCName whispers to you, 'You are not in an alliance.'");
-            my $help = quest::saylink("help alliance", 1, "help alliance");
-            $client->Message(315, "$NPCName whispers to you, 'Say ($help) to learn about alliances!'");
-        } else {
-            ShowBalance('alliance');
-        }
+}
+elsif ($text =~ /^show balance account$/i) {
+    ShowBalance('account', 'all');
+}
+elsif ($text =~ /^show balance char$/i) {
+    ShowBalance('char', 'all');
+}
+elsif ($text =~ /^show balance weapon$/i) {
+    ShowBalance('all', 'weapon');
+}
+elsif ($text =~ /^show balance armor$/i) {
+    ShowBalance('all', 'armor');
+}
+elsif ($text =~ /^show balance augment$/i) {
+    ShowBalance('all', 'augment');
+}
+
+# ADD SUPPORT FOR COMBINED FILTERS
+elsif ($text =~ /^show balance (all|alliance|account|char) (all|weapon|armor|augment)$/i) {
+    my $cat = lc($1);
+    my $type = lc($2);
+    
+    if ($cat eq 'alliance' && !$in_alliance) {
+        $client->Message(315, "$NPCName whispers to you, 'You are not in an alliance.'");
+    } else {
+        ShowBalance($cat, $type);
     }
-    elsif ($text =~ /^show balance account$/i) {
-        ShowBalance('account');
-    }
-    elsif ($text =~ /^show balance char$/i) {
-        ShowBalance('char');
-    }
+}
     elsif ($text =~ /^search (.+)$/i) {
         my $search_term = $1;
         if (length($search_term) < 3) {
