@@ -330,10 +330,17 @@ sub SendParcel {
         $from_name = $client->GetCleanName();
     }
 
-    # Insert the parcel into the database
+    # Get the next available ID for the parcel
+    my $id_stmt = $db->prepare("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM character_parcels");
+    $id_stmt->execute();
+    my $id_row = $id_stmt->fetch_hashref();
+    my $next_id = $id_row ? int($id_row->{"next_id"}) : 1;
+    $id_stmt->close();
+
+    # Insert the parcel into the database with explicit ID
     # Note: If your table has a 'from_char_id' or 'sender_name' column, add it here
-    my $insert_stmt = $db->prepare("INSERT INTO character_parcels (char_id, item_id, quantity) VALUES (?, ?, ?)");
-    my $result = $insert_stmt->execute($target_char_id, $item_id, $quantity);
+    my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, item_id, quantity) VALUES (?, ?, ?, ?)");
+    my $result = $insert_stmt->execute($next_id, $target_char_id, $item_id, $quantity);
     $insert_stmt->close();
     $db->close();
 
@@ -379,10 +386,17 @@ sub SendParcelByID {
         return 0;
     }
 
-    # Insert the parcel into the database
+    # Get the next available ID for the parcel
     my $db = Database::new(Database::Content);
-    my $insert_stmt = $db->prepare("INSERT INTO character_parcels (char_id, item_id, quantity) VALUES (?, ?, ?)");
-    my $result = $insert_stmt->execute($target_char_id, $item_id, $quantity);
+    my $id_stmt = $db->prepare("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM character_parcels");
+    $id_stmt->execute();
+    my $id_row = $id_stmt->fetch_hashref();
+    my $next_id = $id_row ? int($id_row->{"next_id"}) : 1;
+    $id_stmt->close();
+
+    # Insert the parcel into the database with explicit ID
+    my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, item_id, quantity) VALUES (?, ?, ?, ?)");
+    my $result = $insert_stmt->execute($next_id, $target_char_id, $item_id, $quantity);
     $insert_stmt->close();
     $db->close();
 
