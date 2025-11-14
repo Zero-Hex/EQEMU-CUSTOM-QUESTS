@@ -337,6 +337,13 @@ sub SendParcel {
     my $next_id = $id_row ? int($id_row->{"next_id"}) : 1;
     $id_stmt->close();
 
+    # Get the next available slot_id for this character
+    my $slot_stmt = $db->prepare("SELECT COALESCE(MAX(slot_id), -1) + 1 AS next_slot FROM character_parcels WHERE char_id = ?");
+    $slot_stmt->execute($target_char_id);
+    my $slot_row = $slot_stmt->fetch_hashref();
+    my $next_slot_id = $slot_row ? int($slot_row->{"next_slot"}) : 0;
+    $slot_stmt->close();
+
     # Check if a parcel with this char_id and item_id already exists
     my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
     $check_stmt->execute($target_char_id, $item_id);
@@ -354,9 +361,9 @@ sub SendParcel {
         $result = $update_stmt->execute($new_qty, $existing_id, $target_char_id);
         $update_stmt->close();
     } else {
-        # Insert new parcel with explicit ID
-        my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, item_id, quantity) VALUES (?, ?, ?, ?)");
-        $result = $insert_stmt->execute($next_id, $target_char_id, $item_id, $quantity);
+        # Insert new parcel with explicit ID and slot_id
+        my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, slot_id, item_id, quantity) VALUES (?, ?, ?, ?, ?)");
+        $result = $insert_stmt->execute($next_id, $target_char_id, $next_slot_id, $item_id, $quantity);
         $insert_stmt->close();
     }
     $db->close();
@@ -411,6 +418,13 @@ sub SendParcelByID {
     my $next_id = $id_row ? int($id_row->{"next_id"}) : 1;
     $id_stmt->close();
 
+    # Get the next available slot_id for this character
+    my $slot_stmt = $db->prepare("SELECT COALESCE(MAX(slot_id), -1) + 1 AS next_slot FROM character_parcels WHERE char_id = ?");
+    $slot_stmt->execute($target_char_id);
+    my $slot_row = $slot_stmt->fetch_hashref();
+    my $next_slot_id = $slot_row ? int($slot_row->{"next_slot"}) : 0;
+    $slot_stmt->close();
+
     # Check if a parcel with this char_id and item_id already exists
     my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
     $check_stmt->execute($target_char_id, $item_id);
@@ -428,9 +442,9 @@ sub SendParcelByID {
         $result = $update_stmt->execute($new_qty, $existing_id, $target_char_id);
         $update_stmt->close();
     } else {
-        # Insert new parcel with explicit ID
-        my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, item_id, quantity) VALUES (?, ?, ?, ?)");
-        $result = $insert_stmt->execute($next_id, $target_char_id, $item_id, $quantity);
+        # Insert new parcel with explicit ID and slot_id
+        my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, slot_id, item_id, quantity) VALUES (?, ?, ?, ?, ?)");
+        $result = $insert_stmt->execute($next_id, $target_char_id, $next_slot_id, $item_id, $quantity);
         $insert_stmt->close();
     }
     $db->close();
