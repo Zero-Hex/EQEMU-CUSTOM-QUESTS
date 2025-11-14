@@ -7,18 +7,20 @@
 sub EVENT_SAY {
     # Check 1: Handle the initial !parcel command (typed by the player)
     if (defined $text && $text eq "!parcel") {
-        plugin::DisplayParcels(); 
-        return 1;
+        plugin::DisplayParcels();
+        return;
     }
     # Check 2: Handle the RECLAIM click (RECLAIM_PARCELID)
-    if (defined $text && $text =~ /^RECLAIM\_(\d+)$/) {
+    if (defined $text && $text =~ /^RECLAIM_(\d+)$/) {
         my $parcel_id = $1;
+        quest::debug("RedeemParcel called with parcel_id: $parcel_id");
         plugin::RedeemParcel($parcel_id);
-        return 1;
+        return;
     }
+    # Check 3: Handle !reclaim all command
     if (defined $text && $text eq "!reclaim all") {
         plugin::ReclaimAllParcels();
-        return 1;
+        return;
     }
 }
 

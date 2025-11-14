@@ -89,12 +89,16 @@ sub RedeemParcel {
     my $char_id = $client->CharacterID();
     my $qglobal_key = "PARCELS_$char_id";
 
+    quest::debug("RedeemParcel: char_id=$char_id, parcel_id=$parcel_id");
+
     # 1. INITIAL CHECK: Retrieve the current list of reclaimable items from the QGlobal
     my $qglobal_data = quest::get_data($qglobal_key);
+    quest::debug("RedeemParcel: qglobal_data=" . (defined $qglobal_data ? $qglobal_data : "undef"));
 
-    # Fix: Check if the parcel_id exists in the qglobal data
-    if ($qglobal_data !~ /\b\Q$parcel_id\E\b/) {
+    # Fix: Check if the parcel_id exists in the qglobal data (only if qglobal is set)
+    if (defined $qglobal_data && $qglobal_data ne "" && $qglobal_data !~ /\b\Q$parcel_id\E\b/) {
         $client->Message(315, "That parcel has already been claimed or is invalid.");
+        quest::debug("RedeemParcel: parcel_id not found in qglobal");
         plugin::DisplayParcels(); # Refresh the display
         return;
     }
