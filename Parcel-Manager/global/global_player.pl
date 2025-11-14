@@ -6,19 +6,32 @@
 # =========================================================================
 sub EVENT_SAY {
     # Check 1: Handle the initial !parcel command (typed by the player)
-    if (defined $text && $text eq "!parcel") {
-        plugin::DisplayParcels(); 
-        return 1;
+    if ($text eq "!parcel") {
+        plugin::DisplayParcels();
+        return;
     }
-    # Check 2: Handle the RECLAIM click (RECLAIM_ITEMID_QUANTITY)
-    if (defined $text && $text =~ /^RECLAIM\_(\d+\_\d+)$/) {
-        my $unique_key = $1;
-        plugin::RedeemParcel($unique_key); 
-        return 1;
+
+    # Check 2: Handle !parcel reclaim <ID> command (from clickable link or typed)
+    if ($text =~ /^!parcel reclaim (\d+)$/) {
+        my $parcel_id = $1;
+        quest::debug("RedeemParcel called with parcel_id: $parcel_id");
+        plugin::RedeemParcel($parcel_id);
+        return;
     }
-    if (defined $text && $text eq "!reclaim all") {
+
+    # Check 3: Handle !parcel send <playername> <itemid> <quantity> command
+    if ($text =~ /^!parcel send (\S+) (\d+) (\d+)$/) {
+        my $target_name = $1;
+        my $item_id = $2;
+        my $quantity = $3;
+        plugin::SendParcel($target_name, $item_id, $quantity);
+        return;
+    }
+
+    # Check 4: Handle !reclaim all command
+    if ($text eq "!reclaim all") {
         plugin::ReclaimAllParcels();
-        return 1;
+        return;
     }
 }
 
