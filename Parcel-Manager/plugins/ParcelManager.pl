@@ -294,17 +294,20 @@ sub SendParcel {
     # Check for platinum sending (special case)
     my $is_platinum = 0;
     my $platinum_amount = 0;
+
+    # Ensure quantity is defined and convert to int first
+    $quantity = defined $quantity ? int($quantity) : 0;
+
     if (defined $item_id && lc($item_id) eq "platinum") {
         $is_platinum = 1;
-        $platinum_amount = int($quantity) if defined $quantity;
+        $platinum_amount = $quantity;
         # Convert platinum to copper for storage (1 plat = 1000 copper)
         $quantity = $platinum_amount * 1000;
         $item_id = 99990; # Special currency item ID
+    } else {
+        # Convert item_id to int if not platinum
+        $item_id = int($item_id) if defined $item_id;
     }
-
-    # Validate inputs
-    $item_id = int($item_id) if defined $item_id;
-    $quantity = int($quantity) if defined $quantity;
 
     if (!defined $target_name || $target_name eq "") {
         $client->Message(315, "Error: Target character name is required.");
