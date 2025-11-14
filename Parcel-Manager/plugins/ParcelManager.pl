@@ -335,6 +335,31 @@ sub SendParcel {
         return 0;
     }
 
+    # Check if the item is attuned or nodrop
+    my $item_flags_stmt = $db->prepare("SELECT tradeskills, attuneable, nodrop FROM items WHERE id = ? LIMIT 1");
+    $item_flags_stmt->execute($item_id);
+    my $item_flags = $item_flags_stmt->fetch_hashref();
+    $item_flags_stmt->close();
+
+    if (defined $item_flags) {
+        # Check nodrop flag (tradeskills = 0 means NODROP, or nodrop field = 1)
+        my $is_nodrop = (defined $item_flags->{"nodrop"} && $item_flags->{"nodrop"} == 1) ||
+                        (defined $item_flags->{"tradeskills"} && $item_flags->{"tradeskills"} == 0);
+
+        # Check attuneable flag (attuneable != 0 means the item can be/is attuned)
+        my $is_attuned = defined $item_flags->{"attuneable"} && $item_flags->{"attuneable"} != 0;
+
+        if ($is_nodrop || $is_attuned) {
+            my $item_name = quest::getitemname($item_id);
+            my $reason = $is_nodrop && $is_attuned ? "NODROP and ATTUNED" :
+                         $is_nodrop ? "NODROP" : "ATTUNED";
+            $client->Message(315, "Error: Cannot send '$item_name' - this item is $reason and cannot be parceled.");
+            #quest::debug("SendParcel: Blocked parceling of item $item_id ($item_name) - $reason");
+            $db->close();
+            return 0;
+        }
+    }
+
     # Optional: Set from_name if not provided
     if (!defined $from_name || $from_name eq "") {
         $from_name = $client->GetCleanName();
