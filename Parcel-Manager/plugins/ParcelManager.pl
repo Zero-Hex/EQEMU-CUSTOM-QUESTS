@@ -346,6 +346,7 @@ sub SendParcel {
     my $id_row = $id_stmt->fetch_hashref();
     my $next_id = $id_row ? int($id_row->{"next_id"}) : 1;
     $id_stmt->close();
+    quest::debug("SendParcel: next_id = $next_id");
 
     # Get the next available slot_id for this character
     my $slot_stmt = $db->prepare("SELECT COALESCE(MAX(slot_id), -1) + 1 AS next_slot FROM character_parcels WHERE char_id = ?");
@@ -353,6 +354,7 @@ sub SendParcel {
     my $slot_row = $slot_stmt->fetch_hashref();
     my $next_slot_id = $slot_row ? int($slot_row->{"next_slot"}) : 0;
     $slot_stmt->close();
+    quest::debug("SendParcel: next_slot_id = $next_slot_id for char_id = $target_char_id");
 
     # Check if a parcel with this char_id and item_id already exists
     my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
@@ -366,15 +368,19 @@ sub SendParcel {
         my $existing_id = int($existing_parcel->{"id"});
         my $existing_qty = int($existing_parcel->{"quantity"});
         my $new_qty = $existing_qty + $quantity;
+        quest::debug("SendParcel: Updating existing parcel id=$existing_id, old_qty=$existing_qty, new_qty=$new_qty");
 
         my $update_stmt = $db->prepare("UPDATE character_parcels SET quantity = ? WHERE id = ? AND char_id = ?");
         $result = $update_stmt->execute($new_qty, $existing_id, $target_char_id);
         $update_stmt->close();
+        quest::debug("SendParcel: Update result = " . (defined $result ? $result : "undef"));
     } else {
         # Insert new parcel with explicit ID and slot_id
+        quest::debug("SendParcel: Inserting new parcel - id=$next_id, char_id=$target_char_id, slot_id=$next_slot_id, item_id=$item_id, quantity=$quantity");
         my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, slot_id, item_id, quantity) VALUES (?, ?, ?, ?, ?)");
         $result = $insert_stmt->execute($next_id, $target_char_id, $next_slot_id, $item_id, $quantity);
         $insert_stmt->close();
+        quest::debug("SendParcel: Insert result = " . (defined $result ? $result : "undef"));
     }
     $db->close();
 
