@@ -357,6 +357,7 @@ sub SendParcel {
     quest::debug("SendParcel: next_slot_id = $next_slot_id for char_id = $target_char_id");
 
     # Check if a parcel with this char_id and item_id already exists
+    quest::debug("SendParcel: About to check existing - target_char_id=$target_char_id, item_id=$item_id");
     my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
     $check_stmt->execute($target_char_id, $item_id);
     my $existing_parcel = $check_stmt->fetch_hashref();
