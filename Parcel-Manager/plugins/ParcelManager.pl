@@ -178,7 +178,8 @@ sub RedeemParcel {
     quest::set_data($qglobal_key, $qglobal_data);
 
     # 4. REFRESH THE LIST
-    plugin::DisplayParcels(); 
+    plugin::DisplayParcels();
+}
 
 sub ReclaimAllParcels {
     my $client = plugin::val('$client');
@@ -392,3 +393,6 @@ sub SendParcelByID {
         return 0;
     }
 }
+
+# Plugin must return true value
+1;
