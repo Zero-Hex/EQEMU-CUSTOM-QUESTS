@@ -10,7 +10,7 @@ sub DisplayParcels {
     my $client = plugin::val('$client');
 
     if (!defined $client) {
-        quest::debug("Error: Client context lost in DisplayParcels.");
+        #quest::debug("Error: Client context lost in DisplayParcels.");
         return;
     }
 
@@ -84,23 +84,23 @@ sub RedeemParcel {
     my $client = plugin::val('$client');
 
     if (!defined $client) {
-        quest::debug("Error: Client context lost in RedeemParcel.");
+        #quest::debug("Error: Client context lost in RedeemParcel.");
         return;
     }
 
     my $char_id = $client->CharacterID();
     my $qglobal_key = "PARCELS_$char_id";
 
-    #quest::debug("RedeemParcel: char_id=$char_id, parcel_id=$parcel_id");
+    ##quest::debug("RedeemParcel: char_id=$char_id, parcel_id=$parcel_id");
 
     # 1. INITIAL CHECK: Retrieve the current list of reclaimable items from the QGlobal
     my $qglobal_data = quest::get_data($qglobal_key);
-   #quest::debug("RedeemParcel: qglobal_data=" . (defined $qglobal_data ? $qglobal_data : "undef"));
+   ##quest::debug("RedeemParcel: qglobal_data=" . (defined $qglobal_data ? $qglobal_data : "undef"));
 
     # Fix: Check if the parcel_id exists in the qglobal data (only if qglobal is set)
     if (defined $qglobal_data && $qglobal_data ne "" && $qglobal_data !~ /\b\Q$parcel_id\E\b/) {
         $client->Message(315, "That parcel has already been claimed or is invalid.");
-        quest::debug("RedeemParcel: parcel_id not found in qglobal");
+        #quest::debug("RedeemParcel: parcel_id not found in qglobal");
         plugin::DisplayParcels(); # Refresh the display
         return;
     }
@@ -190,7 +190,7 @@ sub RedeemParcel {
 sub ReclaimAllParcels {
     my $client = plugin::val('$client');
     if (!defined $client) {
-        quest::debug("Error: Client context lost in ReclaimAllParcels.");
+        #quest::debug("Error: Client context lost in ReclaimAllParcels.");
         return;
     }
 
@@ -287,7 +287,7 @@ sub SendParcel {
     my $client = plugin::val('$client');
 
     if (!defined $client) {
-        quest::debug("Error: Client context lost in SendParcel.");
+        #quest::debug("Error: Client context lost in SendParcel.");
         return 0;
     }
 
@@ -312,20 +312,20 @@ sub SendParcel {
 
     # Get the target character ID from the character name (case-insensitive)
     my $db = Database::new(Database::Content);
-    my $char_stmt = $db->prepare("SELECT id FROM character_data WHERE LOWER(name) = LOWER(?) LIMIT 1");
+    my $char_stmt = $db->prepare("SELECT id FROM character_data WHERE name = ? LIMIT 1");
     $char_stmt->execute($target_name);
     my $char_row = $char_stmt->fetch_hashref();
     $char_stmt->close();
 
     if (!defined $char_row) {
         $client->Message(315, "Error: Character '$target_name' not found.");
-        quest::debug("SendParcel: Character '$target_name' not found in database");
+        #quest::debug("SendParcel: Character '$target_name' not found in database");
         $db->close();
         return 0;
     }
 
     my $target_char_id = int($char_row->{"id"});
-    quest::debug("SendParcel: Found character '$target_name' with ID $target_char_id");
+    #quest::debug("SendParcel: Found character '$target_name' with ID $target_char_id");
 
     # Check if player has the item in their inventory
     my $has_item = $client->CountItem($item_id);
@@ -346,7 +346,7 @@ sub SendParcel {
     my $id_row = $id_stmt->fetch_hashref();
     my $next_id = $id_row ? int($id_row->{"next_id"}) : 1;
     $id_stmt->close();
-    quest::debug("SendParcel: next_id = $next_id");
+    #quest::debug("SendParcel: next_id = $next_id");
 
     # Get the next available slot_id for this character
     my $slot_stmt = $db->prepare("SELECT COALESCE(MAX(slot_id), -1) + 1 AS next_slot FROM character_parcels WHERE char_id = ?");
@@ -354,10 +354,10 @@ sub SendParcel {
     my $slot_row = $slot_stmt->fetch_hashref();
     my $next_slot_id = $slot_row ? int($slot_row->{"next_slot"}) : 0;
     $slot_stmt->close();
-    quest::debug("SendParcel: next_slot_id = $next_slot_id for char_id = $target_char_id");
+    #quest::debug("SendParcel: next_slot_id = $next_slot_id for char_id = $target_char_id");
 
     # Check if a parcel with this char_id and item_id already exists
-    quest::debug("SendParcel: About to check existing - target_char_id=$target_char_id, item_id=$item_id");
+    #quest::debug("SendParcel: About to check existing - target_char_id=$target_char_id, item_id=$item_id");
     my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
     $check_stmt->execute($target_char_id, $item_id);
     my $existing_parcel = $check_stmt->fetch_hashref();
@@ -369,29 +369,29 @@ sub SendParcel {
         my $existing_id = int($existing_parcel->{"id"});
         my $existing_qty = int($existing_parcel->{"quantity"});
         my $new_qty = $existing_qty + $quantity;
-        quest::debug("SendParcel: Updating existing parcel id=$existing_id, old_qty=$existing_qty, new_qty=$new_qty");
+        #quest::debug("SendParcel: Updating existing parcel id=$existing_id, old_qty=$existing_qty, new_qty=$new_qty");
 
         my $update_stmt = $db->prepare("UPDATE character_parcels SET quantity = ? WHERE id = ? AND char_id = ?");
         $result = $update_stmt->execute($new_qty, $existing_id, $target_char_id);
-        if (!$result) {
-            quest::debug("SendParcel: UPDATE FAILED - " . $update_stmt->errstr);
+        if ($result) {
+            #quest::debug("SendParcel: UPDATE FAILED - " . $update_stmt->errstr);
         }
         $update_stmt->close();
-        quest::debug("SendParcel: Update result = " . (defined $result ? $result : "undef"));
+        #quest::debug("SendParcel: Update result = " . (defined $result ? $result : "undef"));
     } else {
         # Insert new parcel with explicit ID and slot_id
-        quest::debug("SendParcel: Inserting new parcel - id=$next_id, char_id=$target_char_id, slot_id=$next_slot_id, item_id=$item_id, quantity=$quantity");
+       ##quest::debug("SendParcel: Inserting new parcel - id=$next_id, char_id=$target_char_id, slot_id=$next_slot_id, item_id=$item_id, quantity=$quantity");
         my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, slot_id, item_id, quantity) VALUES (?, ?, ?, ?, ?)");
         $result = $insert_stmt->execute($next_id, $target_char_id, $next_slot_id, $item_id, $quantity);
         if (!$result) {
-            quest::debug("SendParcel: INSERT FAILED - " . $insert_stmt->errstr);
+            ##quest::debug("SendParcel: INSERT FAILED - " . $insert_stmt->errstr);
         }
         $insert_stmt->close();
-        quest::debug("SendParcel: Insert result = " . (defined $result ? $result : "undef"));
+        ##quest::debug("SendParcel: Insert result = " . (defined $result ? $result : "undef"));
     }
     $db->close();
 
-    if ($result) {
+    if (!$result) {
         # Remove the item from the sender's inventory
         $client->RemoveItem($item_id, $quantity);
 
@@ -404,107 +404,6 @@ sub SendParcel {
     }
 }
 
-# Alternative version that uses character ID directly instead of name
-sub SendParcelByID {
-    my ($target_char_id, $item_id, $quantity) = @_;
-
-    # Validate inputs
-    $target_char_id = int($target_char_id) if defined $target_char_id;
-    $item_id = int($item_id) if defined $item_id;
-    $quantity = int($quantity) if defined $quantity;
-
-    my $client = plugin::val('$client');
-    my $remove_from_sender = 0; # Flag to track if we should remove from sender
-
-    if (!defined $target_char_id || $target_char_id <= 0) {
-        if (defined $client) {
-            $client->Message(315, "Error: Invalid target character ID.");
-        }
-        return 0;
-    }
-
-    if (!defined $item_id || $item_id <= 0) {
-        if (defined $client) {
-            $client->Message(315, "Error: Invalid item ID.");
-        }
-        return 0;
-    }
-
-    if (!defined $quantity || $quantity <= 0) {
-        if (defined $client) {
-            $client->Message(315, "Error: Quantity must be greater than 0.");
-        }
-        return 0;
-    }
-
-    # If called with client context, check if sender has the item
-    if (defined $client) {
-        my $has_item = $client->CountItem($item_id);
-        if ($has_item >= $quantity) {
-            $remove_from_sender = 1;
-        } else {
-            $client->Message(315, "Error: You don't have enough of that item. You have $has_item but need $quantity.");
-            return 0;
-        }
-    }
-
-    # Get the next available ID for the parcel
-    my $db = Database::new(Database::Content);
-    my $id_stmt = $db->prepare("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM character_parcels");
-    $id_stmt->execute();
-    my $id_row = $id_stmt->fetch_hashref();
-    my $next_id = $id_row ? int($id_row->{"next_id"}) : 1;
-    $id_stmt->close();
-
-    # Get the next available slot_id for this character
-    my $slot_stmt = $db->prepare("SELECT COALESCE(MAX(slot_id), -1) + 1 AS next_slot FROM character_parcels WHERE char_id = ?");
-    $slot_stmt->execute($target_char_id);
-    my $slot_row = $slot_stmt->fetch_hashref();
-    my $next_slot_id = $slot_row ? int($slot_row->{"next_slot"}) : 0;
-    $slot_stmt->close();
-
-    # Check if a parcel with this char_id and item_id already exists
-    my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
-    $check_stmt->execute($target_char_id, $item_id);
-    my $existing_parcel = $check_stmt->fetch_hashref();
-    $check_stmt->close();
-
-    my $result;
-    if (defined $existing_parcel) {
-        # Update existing parcel by adding to the quantity
-        my $existing_id = int($existing_parcel->{"id"});
-        my $existing_qty = int($existing_parcel->{"quantity"});
-        my $new_qty = $existing_qty + $quantity;
-
-        my $update_stmt = $db->prepare("UPDATE character_parcels SET quantity = ? WHERE id = ? AND char_id = ?");
-        $result = $update_stmt->execute($new_qty, $existing_id, $target_char_id);
-        $update_stmt->close();
-    } else {
-        # Insert new parcel with explicit ID and slot_id
-        my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, slot_id, item_id, quantity) VALUES (?, ?, ?, ?, ?)");
-        $result = $insert_stmt->execute($next_id, $target_char_id, $next_slot_id, $item_id, $quantity);
-        $insert_stmt->close();
-    }
-    $db->close();
-
-    if ($result) {
-        # Remove the item from sender's inventory if flag is set
-        if ($remove_from_sender && defined $client) {
-            $client->RemoveItem($item_id, $quantity);
-        }
-
-        if (defined $client) {
-            my $item_name = quest::getitemname($item_id);
-            $client->Message(315, "Successfully sent $quantity x $item_name!");
-        }
-        return 1;
-    } else {
-        if (defined $client) {
-            $client->Message(315, "Error: Failed to send parcel.");
-        }
-        return 0;
-    }
-}
 
 # Plugin must return true value
 1;
