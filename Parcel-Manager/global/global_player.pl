@@ -19,10 +19,10 @@ sub EVENT_SAY {
         return;
     }
 
-    # Check 3: Handle !parcel send <playername> <itemid> <quantity> command
-    if ($text =~ /^!parcel send (\S+) (\d+) (\d+)$/) {
+    # Check 3: Handle !parcel send <playername> <itemid|platinum> <quantity> command
+    if ($text =~ /^!parcel send (\S+) (\w+) (\d+)$/) {
         my $target_name = $1;
-        my $item_id = $2;
+        my $item_id = $2;  # Can be numeric item ID or "platinum"
         my $quantity = $3;
         plugin::SendParcel($target_name, $item_id, $quantity);
         return;
