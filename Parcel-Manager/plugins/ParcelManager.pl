@@ -310,20 +310,30 @@ sub SendParcel {
         return 0;
     }
 
-    # Get the target character ID from the character name
+    # Get the target character ID from the character name (case-insensitive)
     my $db = Database::new(Database::Content);
-    my $char_stmt = $db->prepare("SELECT id FROM character_data WHERE name = ? LIMIT 1");
+    my $char_stmt = $db->prepare("SELECT id FROM character_data WHERE LOWER(name) = LOWER(?) LIMIT 1");
     $char_stmt->execute($target_name);
     my $char_row = $char_stmt->fetch_hashref();
     $char_stmt->close();
 
     if (!defined $char_row) {
         $client->Message(315, "Error: Character '$target_name' not found.");
+        quest::debug("SendParcel: Character '$target_name' not found in database");
         $db->close();
         return 0;
     }
 
     my $target_char_id = int($char_row->{"id"});
+    quest::debug("SendParcel: Found character '$target_name' with ID $target_char_id");
+
+    # Check if player has the item in their inventory
+    my $has_item = $client->CountItem($item_id);
+    if ($has_item < $quantity) {
+        $client->Message(315, "Error: You don't have enough of that item. You have $has_item but need $quantity.");
+        $db->close();
+        return 0;
+    }
 
     # Optional: Set from_name if not provided
     if (!defined $from_name || $from_name eq "") {
@@ -369,6 +379,9 @@ sub SendParcel {
     $db->close();
 
     if ($result) {
+        # Remove the item from the sender's inventory
+        $client->RemoveItem($item_id, $quantity);
+
         my $item_name = quest::getitemname($item_id);
         $client->Message(315, "Successfully sent $quantity x $item_name to $target_name!");
         return 1;
@@ -388,6 +401,7 @@ sub SendParcelByID {
     $quantity = int($quantity) if defined $quantity;
 
     my $client = plugin::val('$client');
+    my $remove_from_sender = 0; # Flag to track if we should remove from sender
 
     if (!defined $target_char_id || $target_char_id <= 0) {
         if (defined $client) {
@@ -408,6 +422,17 @@ sub SendParcelByID {
             $client->Message(315, "Error: Quantity must be greater than 0.");
         }
         return 0;
+    }
+
+    # If called with client context, check if sender has the item
+    if (defined $client) {
+        my $has_item = $client->CountItem($item_id);
+        if ($has_item >= $quantity) {
+            $remove_from_sender = 1;
+        } else {
+            $client->Message(315, "Error: You don't have enough of that item. You have $has_item but need $quantity.");
+            return 0;
+        }
     }
 
     # Get the next available ID for the parcel
@@ -450,6 +475,11 @@ sub SendParcelByID {
     $db->close();
 
     if ($result) {
+        # Remove the item from sender's inventory if flag is set
+        if ($remove_from_sender && defined $client) {
+            $client->RemoveItem($item_id, $quantity);
+        }
+
         if (defined $client) {
             my $item_name = quest::getitemname($item_id);
             $client->Message(315, "Successfully sent $quantity x $item_name!");
