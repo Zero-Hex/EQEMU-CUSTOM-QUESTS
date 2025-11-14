@@ -5,6 +5,8 @@
 # Subroutines to Display and Redeem Parcels
 # =========================================================================
 sub EVENT_SAY {
+    quest::debug("EVENT_SAY triggered with text: " . (defined $text ? $text : "undef"));
+
     # Check 1: Handle the initial !parcel command (typed by the player)
     if (defined $text && $text eq "!parcel") {
         plugin::DisplayParcels();
@@ -22,5 +24,15 @@ sub EVENT_SAY {
         plugin::ReclaimAllParcels();
         return;
     }
+}
+
+sub EVENT_ITEM_CLICK_CAST {
+    my $item_id = ($itemid || 0);
+    my $spell_id = ($spell_id || 0);
+    quest::debug("EVENT_ITEM_CLICK_CAST: item=$item_id, spell=$spell_id, text=" . (defined $text ? $text : "undef"));
+}
+
+sub EVENT_CLICKDOOR {
+    quest::debug("EVENT_CLICKDOOR triggered");
 }
 

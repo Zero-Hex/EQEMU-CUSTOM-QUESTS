@@ -36,7 +36,9 @@ sub DisplayParcels {
         my $item_name = quest::getitemname($item_id);
 
         # Create the clickable link: RECLAIM_KEY
-        my $reclaim_link = quest::saylink("RECLAIM_$unique_key", 1, "Reclaim");
+        # Format: quest::saylink(text, silent, link_text)
+        # silent=0 means the click will echo to other players
+        my $reclaim_link = quest::saylink("RECLAIM_$unique_key", 0, "Reclaim");
 
         # Add a Separator between each item || is what it is default set as.
         $output .= "- $item_name ($quantity) $reclaim_link\n";
@@ -55,7 +57,7 @@ sub DisplayParcels {
         }
 
         # 2. Create the clickable link
-        my $reclaim_all_link = quest::saylink("!reclaim all", 1, "[RECLAIM ALL]");
+        my $reclaim_all_link = quest::saylink("!reclaim all", 0, "[RECLAIM ALL]");
         
         # 3. Append the link to the existing output message
         $output .= "\n" . $reclaim_all_link . "\n";
