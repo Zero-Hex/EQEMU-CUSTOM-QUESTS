@@ -35,10 +35,9 @@ sub DisplayParcels {
 
         my $item_name = quest::getitemname($item_id);
 
-        # Create the clickable link: RECLAIM_KEY
-        # Format: quest::saylink(text, silent, link_text)
-        # silent=0 means the click will echo to other players
-        my $reclaim_link = quest::saylink("RECLAIM_$unique_key", 0, "Reclaim");
+        # Create the clickable link using command format (!parcel reclaim ID)
+        # Commands starting with ! properly trigger EVENT_SAY
+        my $reclaim_link = quest::saylink("!parcel reclaim $unique_key", 0, "Reclaim");
 
         # Add a Separator between each item || is what it is default set as.
         $output .= "- $item_name ($quantity) $reclaim_link\n";

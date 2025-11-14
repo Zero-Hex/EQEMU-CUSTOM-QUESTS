@@ -12,13 +12,15 @@ sub EVENT_SAY {
         plugin::DisplayParcels();
         return;
     }
-    # Check 2: Handle the RECLAIM click (RECLAIM_PARCELID)
-    if (defined $text && $text =~ /^RECLAIM_(\d+)$/) {
+
+    # Check 2: Handle !parcel reclaim <ID> command (from clickable link or typed)
+    if (defined $text && $text =~ /^!parcel reclaim (\d+)$/) {
         my $parcel_id = $1;
         quest::debug("RedeemParcel called with parcel_id: $parcel_id");
         plugin::RedeemParcel($parcel_id);
         return;
     }
+
     # Check 3: Handle !reclaim all command
     if (defined $text && $text eq "!reclaim all") {
         plugin::ReclaimAllParcels();
