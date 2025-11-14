@@ -360,6 +360,31 @@ sub SendParcel {
         }
     }
 
+    # Check if any instances of this item in the player's inventory have augments
+    my $sender_char_id = $client->CharacterID();
+    my $augment_check_stmt = $db->prepare("SELECT augslot1, augslot2, augslot3, augslot4, augslot5, augslot6 FROM inventory WHERE charid = ? AND itemid = ? LIMIT 1");
+    $augment_check_stmt->execute($sender_char_id, $item_id);
+
+    while (my $inv_row = $augment_check_stmt->fetch_hashref()) {
+        # Check if any augment slot is populated (non-zero)
+        my $has_augments = (defined $inv_row->{"augslot1"} && $inv_row->{"augslot1"} != 0) ||
+                          (defined $inv_row->{"augslot2"} && $inv_row->{"augslot2"} != 0) ||
+                          (defined $inv_row->{"augslot3"} && $inv_row->{"augslot3"} != 0) ||
+                          (defined $inv_row->{"augslot4"} && $inv_row->{"augslot4"} != 0) ||
+                          (defined $inv_row->{"augslot5"} && $inv_row->{"augslot5"} != 0) ||
+                          (defined $inv_row->{"augslot6"} && $inv_row->{"augslot6"} != 0);
+
+        if ($has_augments) {
+            my $item_name = quest::getitemname($item_id);
+            $client->Message(315, "Error: Cannot send '$item_name' - items with augments cannot be parceled. Please remove augments first.");
+            #quest::debug("SendParcel: Blocked parceling of item $item_id ($item_name) - has augments");
+            $augment_check_stmt->close();
+            $db->close();
+            return 0;
+        }
+    }
+    $augment_check_stmt->close();
+
     # Optional: Set from_name if not provided
     if (!defined $from_name || $from_name eq "") {
         $from_name = $client->GetCleanName();
