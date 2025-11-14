@@ -24,8 +24,14 @@ sub EVENT_SAY {
         my $target_name = $1;
         my $item_id = $2;  # Can be numeric item ID or "platinum"
         my $quantity = $3;
+        quest::debug("Command matched! target='$target_name', item_id='$item_id', quantity='$quantity'");
         plugin::SendParcel($target_name, $item_id, $quantity);
         return;
+    }
+
+    # Debug: Show if command didn't match
+    if ($text =~ /^!parcel send/) {
+        quest::debug("!parcel send command didn't match regex. Full text: '$text'");
     }
 
     # Check 4: Handle !reclaim all command

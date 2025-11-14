@@ -291,12 +291,16 @@ sub SendParcel {
         return 0;
     }
 
+    # Debug: Log what we received
+    quest::debug("SendParcel called: target_name='$target_name', item_id='" . (defined $item_id ? $item_id : "undef") . "', quantity='" . (defined $quantity ? $quantity : "undef") . "'");
+
     # Check for platinum sending (special case)
     my $is_platinum = 0;
     my $platinum_amount = 0;
 
     # Ensure quantity is defined and convert to int first
     $quantity = defined $quantity ? int($quantity) : 0;
+    quest::debug("After int conversion: quantity=$quantity");
 
     if (defined $item_id && lc($item_id) eq "platinum") {
         $is_platinum = 1;
@@ -304,9 +308,11 @@ sub SendParcel {
         # Convert platinum to copper for storage (1 plat = 1000 copper)
         $quantity = $platinum_amount * 1000;
         $item_id = 99990; # Special currency item ID
+        quest::debug("Platinum detected: platinum_amount=$platinum_amount, quantity=$quantity, item_id=$item_id");
     } else {
         # Convert item_id to int if not platinum
         $item_id = int($item_id) if defined $item_id;
+        quest::debug("Regular item: item_id=$item_id, quantity=$quantity");
     }
 
     if (!defined $target_name || $target_name eq "") {
