@@ -337,11 +337,28 @@ sub SendParcel {
     my $next_id = $id_row ? int($id_row->{"next_id"}) : 1;
     $id_stmt->close();
 
-    # Insert the parcel into the database with explicit ID
-    # Note: If your table has a 'from_char_id' or 'sender_name' column, add it here
-    my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, item_id, quantity) VALUES (?, ?, ?, ?)");
-    my $result = $insert_stmt->execute($next_id, $target_char_id, $item_id, $quantity);
-    $insert_stmt->close();
+    # Check if a parcel with this char_id and item_id already exists
+    my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
+    $check_stmt->execute($target_char_id, $item_id);
+    my $existing_parcel = $check_stmt->fetch_hashref();
+    $check_stmt->close();
+
+    my $result;
+    if (defined $existing_parcel) {
+        # Update existing parcel by adding to the quantity
+        my $existing_id = int($existing_parcel->{"id"});
+        my $existing_qty = int($existing_parcel->{"quantity"});
+        my $new_qty = $existing_qty + $quantity;
+
+        my $update_stmt = $db->prepare("UPDATE character_parcels SET quantity = ? WHERE id = ? AND char_id = ?");
+        $result = $update_stmt->execute($new_qty, $existing_id, $target_char_id);
+        $update_stmt->close();
+    } else {
+        # Insert new parcel with explicit ID
+        my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, item_id, quantity) VALUES (?, ?, ?, ?)");
+        $result = $insert_stmt->execute($next_id, $target_char_id, $item_id, $quantity);
+        $insert_stmt->close();
+    }
     $db->close();
 
     if ($result) {
@@ -394,10 +411,28 @@ sub SendParcelByID {
     my $next_id = $id_row ? int($id_row->{"next_id"}) : 1;
     $id_stmt->close();
 
-    # Insert the parcel into the database with explicit ID
-    my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, item_id, quantity) VALUES (?, ?, ?, ?)");
-    my $result = $insert_stmt->execute($next_id, $target_char_id, $item_id, $quantity);
-    $insert_stmt->close();
+    # Check if a parcel with this char_id and item_id already exists
+    my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
+    $check_stmt->execute($target_char_id, $item_id);
+    my $existing_parcel = $check_stmt->fetch_hashref();
+    $check_stmt->close();
+
+    my $result;
+    if (defined $existing_parcel) {
+        # Update existing parcel by adding to the quantity
+        my $existing_id = int($existing_parcel->{"id"});
+        my $existing_qty = int($existing_parcel->{"quantity"});
+        my $new_qty = $existing_qty + $quantity;
+
+        my $update_stmt = $db->prepare("UPDATE character_parcels SET quantity = ? WHERE id = ? AND char_id = ?");
+        $result = $update_stmt->execute($new_qty, $existing_id, $target_char_id);
+        $update_stmt->close();
+    } else {
+        # Insert new parcel with explicit ID
+        my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, item_id, quantity) VALUES (?, ?, ?, ?)");
+        $result = $insert_stmt->execute($next_id, $target_char_id, $item_id, $quantity);
+        $insert_stmt->close();
+    }
     $db->close();
 
     if ($result) {
