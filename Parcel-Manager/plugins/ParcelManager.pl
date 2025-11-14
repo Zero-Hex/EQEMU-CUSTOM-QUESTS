@@ -372,6 +372,9 @@ sub SendParcel {
 
         my $update_stmt = $db->prepare("UPDATE character_parcels SET quantity = ? WHERE id = ? AND char_id = ?");
         $result = $update_stmt->execute($new_qty, $existing_id, $target_char_id);
+        if (!$result) {
+            quest::debug("SendParcel: UPDATE FAILED - " . $update_stmt->errstr);
+        }
         $update_stmt->close();
         quest::debug("SendParcel: Update result = " . (defined $result ? $result : "undef"));
     } else {
@@ -379,6 +382,9 @@ sub SendParcel {
         quest::debug("SendParcel: Inserting new parcel - id=$next_id, char_id=$target_char_id, slot_id=$next_slot_id, item_id=$item_id, quantity=$quantity");
         my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, slot_id, item_id, quantity) VALUES (?, ?, ?, ?, ?)");
         $result = $insert_stmt->execute($next_id, $target_char_id, $next_slot_id, $item_id, $quantity);
+        if (!$result) {
+            quest::debug("SendParcel: INSERT FAILED - " . $insert_stmt->errstr);
+        }
         $insert_stmt->close();
         quest::debug("SendParcel: Insert result = " . (defined $result ? $result : "undef"));
     }
