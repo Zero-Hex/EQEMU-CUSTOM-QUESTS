@@ -24,14 +24,27 @@ sub EVENT_SAY {
         my $target_name = $1;
         my $item_id = $2;  # Can be numeric item ID or "platinum"
         my $quantity = $3;
-        quest::debug("Command matched! target='$target_name', item_id='$item_id', quantity='$quantity'");
+        quest::debug("Command matched! Regex captures: 1='$1', 2='$2', 3='$3'");
+        quest::debug("Command matched! Variables: target='$target_name', item_id='$item_id', quantity='$quantity'");
+        quest::debug("About to call plugin::SendParcel with 3 params");
+        plugin::SendParcel($target_name, $item_id, $quantity);
+        quest::debug("Returned from plugin::SendParcel");
+        return;
+    }
+
+    # Check for !send without "parcel" prefix
+    if ($text =~ /^!send (\S+) (\w+) (\d+)$/) {
+        my $target_name = $1;
+        my $item_id = $2;
+        my $quantity = $3;
+        quest::debug("!send (without parcel) matched! target='$target_name', item_id='$item_id', quantity='$quantity'");
         plugin::SendParcel($target_name, $item_id, $quantity);
         return;
     }
 
     # Debug: Show if command didn't match
-    if ($text =~ /^!parcel send/) {
-        quest::debug("!parcel send command didn't match regex. Full text: '$text'");
+    if ($text =~ /^!parcel send/ || $text =~ /^!send/) {
+        quest::debug("Send command didn't match any regex. Full text: '$text'");
     }
 
     # Check 4: Handle !reclaim all command
