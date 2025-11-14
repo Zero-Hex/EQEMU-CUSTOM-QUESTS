@@ -35,9 +35,10 @@ sub DisplayParcels {
 
         my $item_name = quest::getitemname($item_id);
 
-        # Create the clickable link using command format (!parcel reclaim ID)
-        # Commands starting with ! properly trigger EVENT_SAY
-        my $reclaim_link = quest::saylink("!parcel reclaim $unique_key", 0, "Reclaim");
+        # Create the clickable link: RECLAIM_KEY
+        # Format: quest::saylink(text, silent, link_text)
+        # silent=0 means the click will echo to other players
+        my $reclaim_link = quest::saylink("!parcel reclaim $unique_key", 1, "Reclaim");
 
         # Add a Separator between each item || is what it is default set as.
         $output .= "- $item_name ($quantity) $reclaim_link\n";
@@ -90,11 +91,11 @@ sub RedeemParcel {
     my $char_id = $client->CharacterID();
     my $qglobal_key = "PARCELS_$char_id";
 
-    quest::debug("RedeemParcel: char_id=$char_id, parcel_id=$parcel_id");
+    #quest::debug("RedeemParcel: char_id=$char_id, parcel_id=$parcel_id");
 
     # 1. INITIAL CHECK: Retrieve the current list of reclaimable items from the QGlobal
     my $qglobal_data = quest::get_data($qglobal_key);
-    quest::debug("RedeemParcel: qglobal_data=" . (defined $qglobal_data ? $qglobal_data : "undef"));
+   #quest::debug("RedeemParcel: qglobal_data=" . (defined $qglobal_data ? $qglobal_data : "undef"));
 
     # Fix: Check if the parcel_id exists in the qglobal data (only if qglobal is set)
     if (defined $qglobal_data && $qglobal_data ne "" && $qglobal_data !~ /\b\Q$parcel_id\E\b/) {
