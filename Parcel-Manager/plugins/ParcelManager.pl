@@ -140,8 +140,25 @@ sub RedeemParcel {
     } else {
         # Normal Item Logic
         my $item_name = quest::getitemname($item_id);
-        # Fix: Ensure quantity is passed correctly to summonitem
-        quest::summonitem($item_id, $quantity);
+
+        # Check if item is stackable
+        my $item_check = $db->prepare("SELECT stacksize FROM items WHERE id = ?");
+        $item_check->execute($item_id);
+        my $item_data = $item_check->fetch_hashref();
+        $item_check->close();
+
+        my $stacksize = $item_data ? int($item_data->{"stacksize"}) : 1;
+
+        if ($stacksize > 1) {
+            # Stackable item - use quantity parameter
+            quest::summonitem($item_id, $quantity);
+        } else {
+            # Non-stackable item - summon one at a time
+            for (my $i = 0; $i < $quantity; $i++) {
+                quest::summonitem($item_id);
+            }
+        }
+
         $message = "You have reclaimed $quantity x $item_name!";
     }
 
@@ -213,7 +230,24 @@ sub ReclaimAllParcels {
         } else {
             # Item Logic
             my $item_name = quest::getitemname($item_id);
-            quest::summonitem($item_id, $quantity);
+
+            # Check if item is stackable
+            my $item_check = $db->prepare("SELECT stacksize FROM items WHERE id = ?");
+            $item_check->execute($item_id);
+            my $item_data = $item_check->fetch_hashref();
+            $item_check->close();
+
+            my $stacksize = $item_data ? int($item_data->{"stacksize"}) : 1;
+
+            if ($stacksize > 1) {
+                # Stackable item - use quantity parameter
+                quest::summonitem($item_id, $quantity);
+            } else {
+                # Non-stackable item - summon one at a time
+                for (my $i = 0; $i < $quantity; $i++) {
+                    quest::summonitem($item_id);
+                }
+            }
 
             $parcels_claimed_data .= " | $item_name ($quantity)";
         }
