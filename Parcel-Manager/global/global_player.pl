@@ -10,10 +10,10 @@ sub EVENT_SAY {
         plugin::DisplayParcels(); 
         return 1;
     }
-    # Check 2: Handle the RECLAIM click (RECLAIM_ITEMID_QUANTITY)
-    if (defined $text && $text =~ /^RECLAIM\_(\d+\_\d+)$/) {
-        my $unique_key = $1;
-        plugin::RedeemParcel($unique_key); 
+    # Check 2: Handle the RECLAIM click (RECLAIM_PARCELID)
+    if (defined $text && $text =~ /^RECLAIM\_(\d+)$/) {
+        my $parcel_id = $1;
+        plugin::RedeemParcel($parcel_id);
         return 1;
     }
     if (defined $text && $text eq "!reclaim all") {
