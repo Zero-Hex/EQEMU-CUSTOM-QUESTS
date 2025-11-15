@@ -281,21 +281,7 @@ sub ReclaimAllParcels {
 }
 
 sub SendParcel {
-    # Debug: Show raw @_ array first
-    quest::debug("=== SendParcel ENTRY ===");
-    quest::debug("Raw \@_ array has " . scalar(@_) . " elements");
-    for (my $i = 0; $i < scalar(@_); $i++) {
-        quest::debug("  \$_[$i] = '" . (defined $_[$i] ? $_[$i] : "undef") . "'");
-    }
-
     my ($target_name, $item_id, $quantity, $from_name) = @_;
-
-    # Debug: Log what we unpacked
-    quest::debug("After unpacking:");
-    quest::debug("  target_name = '" . (defined $target_name ? $target_name : "undef") . "'");
-    quest::debug("  item_id = '" . (defined $item_id ? $item_id : "undef") . "'");
-    quest::debug("  quantity = '" . (defined $quantity ? $quantity : "undef") . "'");
-    quest::debug("  from_name = '" . (defined $from_name ? $from_name : "undef") . "'");
 
     # Fetch $client internally
     my $client = plugin::val('$client');
@@ -304,6 +290,10 @@ sub SendParcel {
         quest::debug("Error: Client context lost in SendParcel.");
         return 0;
     }
+
+    # Debug logging
+    $client->Message(315, "[DEBUG] SendParcel START - target=$target_name, item=$item_id, qty=$quantity");
+    quest::debug("SendParcel called: target='$target_name', item='$item_id', qty='$quantity'");
 
     # Check for platinum sending (special case)
     my $is_platinum = 0;
