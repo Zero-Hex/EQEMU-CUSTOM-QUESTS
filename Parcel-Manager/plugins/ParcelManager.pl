@@ -343,6 +343,8 @@ sub SendParcel {
 
     # Variable to store max_charges - needed later for stacking logic
     my $max_charges = 0;
+    # Track if this is a charged item so we know how many items to remove (1 for charged, quantity for non-charged)
+    my $is_charged_item = 0;
 
     # Validate sender has the items/currency before creating parcel
     if ($is_platinum) {
@@ -363,6 +365,7 @@ sub SendParcel {
 
         # If item has charges, get the actual charges from inventory and override quantity
         if ($max_charges > 0) {
+            $is_charged_item = 1;
             my $sender_char_id = $client->CharacterID();
             my $charges_stmt = $db->prepare("SELECT charges FROM inventory WHERE character_id = ? AND item_id = ? LIMIT 1");
             $charges_stmt->execute($sender_char_id, $item_id);
@@ -498,9 +501,17 @@ sub SendParcel {
         $client->TakePlatinum($platinum_amount, 1);
         $client->Message(315, "Successfully sent $platinum_amount platinum to $target_name!");
     } else {
-        $client->RemoveItem($item_id, $quantity);
+        # For charged items, only remove 1 item (the item with charges)
+        # For non-charged items, remove the quantity specified
+        my $remove_count = $is_charged_item ? 1 : $quantity;
+        $client->RemoveItem($item_id, $remove_count);
+
         my $item_name = quest::getitemname($item_id);
-        $client->Message(315, "Successfully sent $quantity x $item_name to $target_name!");
+        if ($is_charged_item) {
+            $client->Message(315, "Successfully sent $item_name with $quantity charges to $target_name!");
+        } else {
+            $client->Message(315, "Successfully sent $quantity x $item_name to $target_name!");
+        }
     }
     return 1;
 }
