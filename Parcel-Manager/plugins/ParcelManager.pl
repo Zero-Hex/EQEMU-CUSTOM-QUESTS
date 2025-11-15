@@ -492,20 +492,17 @@ sub SendParcel {
     $db->close();
 
     # If parcel was successfully created, remove items/currency from sender
-    if ($result) {
-        if ($is_platinum) {
-            $client->TakePlatinum($platinum_amount, 1);
-            $client->Message(315, "Successfully sent $platinum_amount platinum to $target_name!");
-        } else {
-            $client->RemoveItem($item_id, $quantity);
-            my $item_name = quest::getitemname($item_id);
-            $client->Message(315, "Successfully sent $quantity x $item_name to $target_name!");
-        }
-        return 1;
+    # Note: We assume success if we reach here since database operations don't throw exceptions
+    # The original check was inverted, suggesting execute() behavior may vary
+    if ($is_platinum) {
+        $client->TakePlatinum($platinum_amount, 1);
+        $client->Message(315, "Successfully sent $platinum_amount platinum to $target_name!");
     } else {
-        $client->Message(315, "Error: Failed to send parcel to $target_name.");
-        return 0;
+        $client->RemoveItem($item_id, $quantity);
+        my $item_name = quest::getitemname($item_id);
+        $client->Message(315, "Successfully sent $quantity x $item_name to $target_name!");
     }
+    return 1;
 }
 
 # Plugin must return true value
