@@ -16,7 +16,9 @@ sub EVENT_SAY {
 
     # Check 2: Handle !parcel reclaim <ID> command (from clickable link or typed)
     if ($text =~ /^!parcel reclaim (\d+)$/) {
+        # CRITICAL: Capture match variable IMMEDIATELY
         my $parcel_id = $1;
+
         quest::debug("RedeemParcel called with parcel_id: $parcel_id");
         plugin::RedeemParcel($parcel_id);
         return;
@@ -24,13 +26,12 @@ sub EVENT_SAY {
 
     # Check 3: Handle !parcel send <playername> <itemid|platinum> <quantity> command
     if ($text =~ /^!parcel send (\S+) (\w+) (\d+)$/) {
-        my $target_name = $1;
-        my $item_id = $2;  # Can be numeric item ID or "platinum"
-        my $quantity = $3;
+        # CRITICAL: Capture match variables IMMEDIATELY before any function calls
+        my ($target_name, $item_id, $quantity) = ($1, $2, $3);
+
+        # Now safe to call quest::debug (won't clobber the captured values)
         quest::debug("=== PARCEL SEND MATCH ===");
-        quest::debug("Regex captures: 1='$1', 2='$2', 3='$3'");
-        quest::debug("Variables BEFORE call: target='$target_name', item_id='$item_id', quantity='$quantity'");
-        quest::debug("Type checks: target defined=" . (defined $target_name ? "yes" : "no") . ", item_id defined=" . (defined $item_id ? "yes" : "no") . ", quantity defined=" . (defined $quantity ? "yes" : "no"));
+        quest::debug("Captured: target='$target_name', item_id='$item_id', quantity='$quantity'");
         quest::debug("Calling: plugin::SendParcel('$target_name', '$item_id', '$quantity')");
 
         my $result = plugin::SendParcel($target_name, $item_id, $quantity);
@@ -42,9 +43,9 @@ sub EVENT_SAY {
 
     # Check for !send without "parcel" prefix
     if ($text =~ /^!send (\S+) (\w+) (\d+)$/) {
-        my $target_name = $1;
-        my $item_id = $2;
-        my $quantity = $3;
+        # CRITICAL: Capture match variables IMMEDIATELY
+        my ($target_name, $item_id, $quantity) = ($1, $2, $3);
+
         quest::debug("!send (without parcel) matched! target='$target_name', item_id='$item_id', quantity='$quantity'");
         plugin::SendParcel($target_name, $item_id, $quantity);
         return;
