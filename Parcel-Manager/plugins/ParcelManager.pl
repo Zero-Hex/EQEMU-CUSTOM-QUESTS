@@ -341,6 +341,9 @@ sub SendParcel {
 
     my $target_char_id = int($char_row->{"id"});
 
+    # Variable to store max_charges - needed later for stacking logic
+    my $max_charges = 0;
+
     # Validate sender has the items/currency before creating parcel
     if ($is_platinum) {
         # Verify sender has enough platinum
@@ -356,7 +359,7 @@ sub SendParcel {
         $item_check->execute($item_id);
         my $item_data = $item_check->fetch_hashref();
         $item_check->close();
-        my $max_charges = $item_data ? int($item_data->{"maxcharges"}) : 0;
+        $max_charges = $item_data ? int($item_data->{"maxcharges"}) : 0;
 
         # If item has charges, get the actual charges from inventory and override quantity
         if ($max_charges > 0) {
@@ -489,7 +492,7 @@ sub SendParcel {
     $db->close();
 
     # If parcel was successfully created, remove items/currency from sender
-    if (!$result) {
+    if ($result) {
         if ($is_platinum) {
             $client->TakePlatinum($platinum_amount, 1);
             $client->Message(315, "Successfully sent $platinum_amount platinum to $target_name!");
