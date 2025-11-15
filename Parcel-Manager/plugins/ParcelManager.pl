@@ -368,18 +368,20 @@ sub SendParcel {
         }
 
         # Check if the item is attuned or nodrop
-        my $item_flags_stmt = $db->prepare("SELECT tradeskills, attuneable, nodrop FROM items WHERE id = ? LIMIT 1");
-        $item_flags_stmt->execute($item_id);
-        my $item_flags = $item_flags_stmt->fetch_hashref();
+my $item_flags_nodrop = $db->prepare("SELECT nodrop FROM items WHERE id = ? LIMIT 1");
+        my $item_flags_attuned = $db->prepare("SELECT istnodrop FROM inventory WHERE item_id = ? char_id = ? LIMIT 1");
+        $item_flags_nodrop->execute($item_id);
+        $item_flags_attuned->execute($item_id, $char_id)
+        my $item_flags1 = $item_flags_nodrop->fetch_hashref();
+        my $item_flags2 = $item_flags_attuned->fetch_hashref();
         $item_flags_stmt->close();
 
         if (defined $item_flags) {
             # Check nodrop flag (tradeskills = 0 means NODROP, or nodrop field = 1)
-            my $is_nodrop = (defined $item_flags->{"nodrop"} && $item_flags->{"nodrop"} == 1) ||
-                            (defined $item_flags->{"tradeskills"} && $item_flags->{"tradeskills"} == 0);
+            my $is_nodrop = (defined $item_flags1->{"nodrop"} && $item_flags1->{"nodrop"} == 0);
 
             # Check attuneable flag (attuneable != 0 means the item can be/is attuned)
-            my $is_attuned = defined $item_flags->{"attuneable"} && $item_flags->{"attuneable"} != 0;
+            my $is_attuned = defined $item_flags2->{"istnodrop"} && $item_flags2->{"istnodrop"} == 1;
 
             if ($is_nodrop || $is_attuned) {
                 my $item_name = quest::getitemname($item_id);
@@ -496,3 +498,4 @@ sub SendParcel {
 
 # Plugin must return true value
 1;
+
