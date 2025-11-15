@@ -453,15 +453,25 @@ sub SendParcel {
     my $next_slot_id = $slot_row ? int($slot_row->{"next_slot"}) : 0;
     $slot_stmt->close();
 
-    # Check if parcel for this item_id already exists (to stack quantities)
-    my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
-    $check_stmt->execute($target_char_id, $item_id);
-    my $existing_parcel = $check_stmt->fetch_hashref();
-    $check_stmt->close();
+    # Determine if we should stack this parcel with an existing one
+    # Do NOT stack charged items (maxcharges > 0) as this would exceed maxcharges limit
+    my $should_stack = 0;
+    my $existing_parcel;
+
+    # Check if item definition still available from earlier check
+    if (!$is_platinum && $max_charges == 0) {
+        # Only check for existing parcel if not a charged item
+        my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
+        $check_stmt->execute($target_char_id, $item_id);
+        $existing_parcel = $check_stmt->fetch_hashref();
+        $check_stmt->close();
+        $should_stack = defined $existing_parcel;
+    }
 
     my $result;
-    if (defined $existing_parcel) {
+    if ($should_stack) {
         # Update existing parcel by stacking the quantities together
+        # This is safe for stackable items and non-charged items
         my $existing_id = int($existing_parcel->{"id"});
         my $existing_qty = int($existing_parcel->{"quantity"});
         my $new_qty = $existing_qty + $quantity;
@@ -471,6 +481,7 @@ sub SendParcel {
         $update_stmt->close();
     } else {
         # Create new parcel entry
+        # Always create new entries for charged items to avoid exceeding maxcharges
         my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, slot_id, item_id, quantity) VALUES (?, ?, ?, ?, ?)");
         $result = $insert_stmt->execute($next_id, $target_char_id, $next_slot_id, $item_id, $quantity);
         $insert_stmt->close();
