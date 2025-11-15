@@ -368,34 +368,38 @@ sub SendParcel {
         }
 
         # Check if the item is attuned or nodrop
+        # Get sender's character ID first
+        my $sender_char_id = $client->CharacterID();
+
+        # Check 1: Item table nodrop flag
         my $item_flags_nodrop = $db->prepare("SELECT nodrop FROM items WHERE id = ? LIMIT 1");
-        my $item_flags_attuned = $db->prepare("SELECT istnodrop FROM inventory WHERE item_id = ? char_id = ? LIMIT 1");
         $item_flags_nodrop->execute($item_id);
-        $item_flags_attuned->execute($item_id, $char_id)
-        my $item_flags1 = $item_flags_nodrop->fetch_hashref();
-        my $item_flags2 = $item_flags_attuned->fetch_hashref();
-        $item_flags_stmt->close();
+        my $item_nodrop_data = $item_flags_nodrop->fetch_hashref();
+        $item_flags_nodrop->close();
 
-        if (defined $item_flags) {
-            # Check nodrop flag (tradeskills = 0 means NODROP, or nodrop field = 1)
-            my $is_nodrop = (defined $item_flags1->{"nodrop"} && $item_flags1->{"nodrop"} == 0);
+        # Check 2: Inventory instance attuned flag (instnodrop)
+        my $item_flags_attuned = $db->prepare("SELECT instnodrop FROM inventory WHERE charid = ? AND itemid = ? LIMIT 1");
+        $item_flags_attuned->execute($sender_char_id, $item_id);
+        my $item_attuned_data = $item_flags_attuned->fetch_hashref();
+        $item_flags_attuned->close();
 
-            # Check attuneable flag (attuneable != 0 means the item can be/is attuned)
-            my $is_attuned = defined $item_flags2->{"istnodrop"} && $item_flags2->{"istnodrop"} == 1;
+        # Check nodrop flag (nodrop = 0 means NODROP)
+        my $is_nodrop = (defined $item_nodrop_data && defined $item_nodrop_data->{"nodrop"} && $item_nodrop_data->{"nodrop"} == 0);
 
-            if ($is_nodrop || $is_attuned) {
-                my $item_name = quest::getitemname($item_id);
-                my $reason = $is_nodrop && $is_attuned ? "NODROP and ATTUNED" :
-                             $is_nodrop ? "NODROP" : "ATTUNED";
-                $client->Message(315, "Error: Cannot send '$item_name' - this item is $reason and cannot be parceled.");
-                #quest::debug("SendParcel: Blocked parceling of item $item_id ($item_name) - $reason");
-                $db->close();
-                return 0;
-            }
+        # Check attuned flag (instnodrop = 1 means ATTUNED)
+        my $is_attuned = (defined $item_attuned_data && defined $item_attuned_data->{"instnodrop"} && $item_attuned_data->{"instnodrop"} == 1);
+
+        if ($is_nodrop || $is_attuned) {
+            my $item_name = quest::getitemname($item_id);
+            my $reason = $is_nodrop && $is_attuned ? "NODROP and ATTUNED" :
+                         $is_nodrop ? "NODROP" : "ATTUNED";
+            $client->Message(315, "Error: Cannot send '$item_name' - this item is $reason and cannot be parceled.");
+            quest::debug("SendParcel: Blocked parceling of item $item_id ($item_name) - $reason");
+            $db->close();
+            return 0;
         }
 
         # Check if any instances of this item in the player's inventory have augments
-        my $sender_char_id = $client->CharacterID();
         my $augment_check_stmt = $db->prepare("SELECT augslot1, augslot2, augslot3, augslot4, augslot5, augslot6 FROM inventory WHERE charid = ? AND itemid = ? LIMIT 1");
         $augment_check_stmt->execute($sender_char_id, $item_id);
 
