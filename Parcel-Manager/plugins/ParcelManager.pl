@@ -351,7 +351,7 @@ sub SendParcel {
     # Handle platinum sending separately
     if ($is_platinum) {
         # Check if player has enough platinum
-        my $player_platinum = $client->GetPlatinum();
+        my $player_platinum = $client->GetCarriedPlatinum();
         if ($player_platinum < $platinum_amount) {
             $client->Message(315, "Error: You don't have enough platinum. You have $player_platinum but need $platinum_amount.");
             $db->close();
@@ -368,7 +368,7 @@ sub SendParcel {
         }
 
         # Check if the item is attuned or nodrop
-my $item_flags_nodrop = $db->prepare("SELECT nodrop FROM items WHERE id = ? LIMIT 1");
+        my $item_flags_nodrop = $db->prepare("SELECT nodrop FROM items WHERE id = ? LIMIT 1");
         my $item_flags_attuned = $db->prepare("SELECT istnodrop FROM inventory WHERE item_id = ? char_id = ? LIMIT 1");
         $item_flags_nodrop->execute($item_id);
         $item_flags_attuned->execute($item_id, $char_id)
@@ -480,7 +480,7 @@ my $item_flags_nodrop = $db->prepare("SELECT nodrop FROM items WHERE id = ? LIMI
         # Remove the item/currency from the sender's inventory
         if ($is_platinum) {
             # Take platinum from the sender
-            $client->TakePlatinum($platinum_amount);
+            $client->TakePlatinum($platinum_amount, 1);
             $client->Message(315, "Successfully sent $platinum_amount platinum to $target_name!");
         } else {
             # Remove the item from the sender's inventory
@@ -498,4 +498,3 @@ my $item_flags_nodrop = $db->prepare("SELECT nodrop FROM items WHERE id = ? LIMI
 
 # Plugin must return true value
 1;
-
