@@ -341,6 +341,16 @@ sub SendParcel {
 
     my $target_char_id = int($char_row->{"id"});
 
+    # Get sender's character ID (needed for multiple checks below)
+    my $sender_char_id = $client->CharacterID();
+
+    # Prevent sending to yourself
+    if ($sender_char_id == $target_char_id) {
+        $client->Message(315, "Error: You cannot send a parcel to yourself.");
+        $db->close();
+        return 0;
+    }
+
     # Variable to store max_charges - needed later for stacking logic
     my $max_charges = 0;
     # Track if this is a charged item so we know how many items to remove (1 for charged, quantity for non-charged)
@@ -366,7 +376,6 @@ sub SendParcel {
         # If item has charges, get the actual charges from inventory and override quantity
         if ($max_charges > 0) {
             $is_charged_item = 1;
-            my $sender_char_id = $client->CharacterID();
             my $charges_stmt = $db->prepare("SELECT charges FROM inventory WHERE character_id = ? AND item_id = ? LIMIT 1");
             $charges_stmt->execute($sender_char_id, $item_id);
             my $charges_row = $charges_stmt->fetch_hashref();
