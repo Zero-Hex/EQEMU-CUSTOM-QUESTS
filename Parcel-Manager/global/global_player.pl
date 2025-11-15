@@ -5,6 +5,9 @@
 # Subroutines to Display and Redeem Parcels
 # =========================================================================
 sub EVENT_SAY {
+    # Debug: Confirm this file is loaded
+    quest::debug("ParcelManager global_player.pl EVENT_SAY triggered with text: '$text'");
+
     # Check 1: Handle the initial !parcel command (typed by the player)
     if ($text eq "!parcel") {
         plugin::DisplayParcels();
@@ -24,11 +27,16 @@ sub EVENT_SAY {
         my $target_name = $1;
         my $item_id = $2;  # Can be numeric item ID or "platinum"
         my $quantity = $3;
-        quest::debug("Command matched! Regex captures: 1='$1', 2='$2', 3='$3'");
-        quest::debug("Command matched! Variables: target='$target_name', item_id='$item_id', quantity='$quantity'");
-        quest::debug("About to call plugin::SendParcel with 3 params");
-        plugin::SendParcel($target_name, $item_id, $quantity);
-        quest::debug("Returned from plugin::SendParcel");
+        quest::debug("=== PARCEL SEND MATCH ===");
+        quest::debug("Regex captures: 1='$1', 2='$2', 3='$3'");
+        quest::debug("Variables BEFORE call: target='$target_name', item_id='$item_id', quantity='$quantity'");
+        quest::debug("Type checks: target defined=" . (defined $target_name ? "yes" : "no") . ", item_id defined=" . (defined $item_id ? "yes" : "no") . ", quantity defined=" . (defined $quantity ? "yes" : "no"));
+        quest::debug("Calling: plugin::SendParcel('$target_name', '$item_id', '$quantity')");
+
+        my $result = plugin::SendParcel($target_name, $item_id, $quantity);
+
+        quest::debug("Returned from plugin::SendParcel with result: " . (defined $result ? $result : "undef"));
+        quest::debug("=== END PARCEL SEND ===");
         return;
     }
 
