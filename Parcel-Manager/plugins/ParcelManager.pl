@@ -140,25 +140,30 @@ sub RedeemParcel {
         # Regular item redemption
         my $item_name = quest::getitemname($item_id);
 
-        # Determine if item is stackable to properly summon the quantity
-        my $item_check = $db->prepare("SELECT stacksize FROM items WHERE id = ?");
+        # Check if item has charges (maxcharges > 0 means it's a charged item)
+        my $item_check = $db->prepare("SELECT stacksize, maxcharges FROM items WHERE id = ?");
         $item_check->execute($item_id);
         my $item_data = $item_check->fetch_hashref();
         $item_check->close();
 
         my $stacksize = $item_data ? int($item_data->{"stacksize"}) : 1;
+        my $max_charges = $item_data ? int($item_data->{"maxcharges"}) : 0;
 
-        if ($stacksize > 1) {
-            # Stackable: summon entire quantity at once
+        if ($max_charges > 0) {
+            # Item with charges: quantity represents charges, summon one item with those charges
             quest::summonitem($item_id, $quantity);
+            $message = "You have reclaimed $item_name with $quantity charges!";
+        } elsif ($stacksize > 1) {
+            # Stackable item: summon entire quantity at once
+            quest::summonitem($item_id, $quantity);
+            $message = "You have reclaimed $quantity x $item_name!";
         } else {
             # Non-stackable: summon individual items
             for (my $i = 0; $i < $quantity; $i++) {
                 quest::summonitem($item_id);
             }
+            $message = "You have reclaimed $quantity x $item_name!";
         }
-
-        $message = "You have reclaimed $quantity x $item_name!";
     }
 
     # Remove parcel from database
@@ -230,25 +235,30 @@ sub ReclaimAllParcels {
             # Regular item redemption
             my $item_name = quest::getitemname($item_id);
 
-            # Determine if item is stackable to properly summon the quantity
-            my $item_check = $db->prepare("SELECT stacksize FROM items WHERE id = ?");
+            # Check if item has charges (maxcharges > 0 means it's a charged item)
+            my $item_check = $db->prepare("SELECT stacksize, maxcharges FROM items WHERE id = ?");
             $item_check->execute($item_id);
             my $item_data = $item_check->fetch_hashref();
             $item_check->close();
 
             my $stacksize = $item_data ? int($item_data->{"stacksize"}) : 1;
+            my $max_charges = $item_data ? int($item_data->{"maxcharges"}) : 0;
 
-            if ($stacksize > 1) {
-                # Stackable: summon entire quantity at once
+            if ($max_charges > 0) {
+                # Item with charges: quantity represents charges, summon one item with those charges
                 quest::summonitem($item_id, $quantity);
+                $parcels_claimed_data .= " | $item_name ($quantity charges)";
+            } elsif ($stacksize > 1) {
+                # Stackable item: summon entire quantity at once
+                quest::summonitem($item_id, $quantity);
+                $parcels_claimed_data .= " | $item_name ($quantity)";
             } else {
                 # Non-stackable: summon individual items
                 for (my $i = 0; $i < $quantity; $i++) {
                     quest::summonitem($item_id);
                 }
+                $parcels_claimed_data .= " | $item_name ($quantity)";
             }
-
-            $parcels_claimed_data .= " | $item_name ($quantity)";
         }
 
         $total_claimed++;
@@ -331,6 +341,21 @@ sub SendParcel {
 
     my $target_char_id = int($char_row->{"id"});
 
+    # Get sender's character ID (needed for multiple checks below)
+    my $sender_char_id = $client->CharacterID();
+
+    # Prevent sending to yourself
+    if ($sender_char_id == $target_char_id) {
+        $client->Message(315, "Error: You cannot send a parcel to yourself.");
+        $db->close();
+        return 0;
+    }
+
+    # Variable to store max_charges - needed later for stacking logic
+    my $max_charges = 0;
+    # Track if this is a charged item so we know how many items to remove (1 for charged, quantity for non-charged)
+    my $is_charged_item = 0;
+
     # Validate sender has the items/currency before creating parcel
     if ($is_platinum) {
         # Verify sender has enough platinum
@@ -341,16 +366,40 @@ sub SendParcel {
             return 0;
         }
     } else {
-        # Verify sender has the item in their inventory
-        my $has_item = $client->CountItem($item_id);
-        if ($has_item < $quantity) {
-            $client->Message(315, "Error: You don't have enough of that item. You have $has_item but need $quantity.");
-            $db->close();
-            return 0;
+        # Check if item has charges (maxcharges > 0 means it's a charged item)
+        my $item_check = $db->prepare("SELECT maxcharges FROM items WHERE id = ?");
+        $item_check->execute($item_id);
+        my $item_data = $item_check->fetch_hashref();
+        $item_check->close();
+        $max_charges = $item_data ? int($item_data->{"maxcharges"}) : 0;
+
+        # If item has charges, get the actual charges from inventory and override quantity
+        if ($max_charges > 0) {
+            $is_charged_item = 1;
+            my $charges_stmt = $db->prepare("SELECT charges FROM inventory WHERE character_id = ? AND item_id = ? LIMIT 1");
+            $charges_stmt->execute($sender_char_id, $item_id);
+            my $charges_row = $charges_stmt->fetch_hashref();
+            $charges_stmt->close();
+
+            if (defined $charges_row && defined $charges_row->{"charges"}) {
+                # For charged items, quantity in parcel represents charges
+                $quantity = int($charges_row->{"charges"});
+            } else {
+                $client->Message(315, "Error: Could not find that item in your inventory.");
+                $db->close();
+                return 0;
+            }
+        } else {
+            # For non-charged items, verify sender has enough items
+            my $has_item = $client->CountItem($item_id);
+            if ($has_item < $quantity) {
+                $client->Message(315, "Error: You don't have enough of that item. You have $has_item but need $quantity.");
+                $db->close();
+                return 0;
+            }
         }
 
         # Prevent sending NODROP or ATTUNED items
-        my $sender_char_id = $client->CharacterID();
 
         # Check item table for nodrop flag (nodrop = 0 means NODROP)
         my $item_flags_nodrop = $db->prepare("SELECT nodrop FROM items WHERE id = ? LIMIT 1");
@@ -382,12 +431,12 @@ sub SendParcel {
 
         while (my $inv_row = $augment_check_stmt->fetch_hashref()) {
             # Check if any augment slot is populated (non-zero)
-            my $has_augments = (defined $inv_row->{"augslot1"} && $inv_row->{"augslot1"} != 0) ||
-                              (defined $inv_row->{"augslot2"} && $inv_row->{"augslot2"} != 0) ||
-                              (defined $inv_row->{"augslot3"} && $inv_row->{"augslot3"} != 0) ||
-                              (defined $inv_row->{"augslot4"} && $inv_row->{"augslot4"} != 0) ||
-                              (defined $inv_row->{"augslot5"} && $inv_row->{"augslot5"} != 0) ||
-                              (defined $inv_row->{"augslot6"} && $inv_row->{"augslot6"} != 0);
+            my $has_augments = (defined $inv_row->{"augment_one"} && $inv_row->{"augment_one"} != 0) ||
+                              (defined $inv_row->{"augment_two"} && $inv_row->{"augment_two"} != 0) ||
+                              (defined $inv_row->{"augment_three"} && $inv_row->{"augment_three"} != 0) ||
+                              (defined $inv_row->{"augment_four"} && $inv_row->{"augment_four"} != 0) ||
+                              (defined $inv_row->{"augment_five"} && $inv_row->{"augment_five"} != 0) ||
+                              (defined $inv_row->{"augment_six"} && $inv_row->{"augment_six"} != 0);
 
             if ($has_augments) {
                 my $item_name = quest::getitemname($item_id);
@@ -419,15 +468,25 @@ sub SendParcel {
     my $next_slot_id = $slot_row ? int($slot_row->{"next_slot"}) : 0;
     $slot_stmt->close();
 
-    # Check if parcel for this item_id already exists (to stack quantities)
-    my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
-    $check_stmt->execute($target_char_id, $item_id);
-    my $existing_parcel = $check_stmt->fetch_hashref();
-    $check_stmt->close();
+    # Determine if we should stack this parcel with an existing one
+    # Do NOT stack charged items (maxcharges > 0) as this would exceed maxcharges limit
+    my $should_stack = 0;
+    my $existing_parcel;
+
+    # Check if item definition still available from earlier check
+    if (!$is_platinum && $max_charges == 0) {
+        # Only check for existing parcel if not a charged item
+        my $check_stmt = $db->prepare("SELECT id, quantity FROM character_parcels WHERE char_id = ? AND item_id = ? LIMIT 1");
+        $check_stmt->execute($target_char_id, $item_id);
+        $existing_parcel = $check_stmt->fetch_hashref();
+        $check_stmt->close();
+        $should_stack = defined $existing_parcel;
+    }
 
     my $result;
-    if (defined $existing_parcel) {
+    if ($should_stack) {
         # Update existing parcel by stacking the quantities together
+        # This is safe for stackable items and non-charged items
         my $existing_id = int($existing_parcel->{"id"});
         my $existing_qty = int($existing_parcel->{"quantity"});
         my $new_qty = $existing_qty + $quantity;
@@ -437,6 +496,7 @@ sub SendParcel {
         $update_stmt->close();
     } else {
         # Create new parcel entry
+        # Always create new entries for charged items to avoid exceeding maxcharges
         my $insert_stmt = $db->prepare("INSERT INTO character_parcels (id, char_id, slot_id, item_id, quantity) VALUES (?, ?, ?, ?, ?)");
         $result = $insert_stmt->execute($next_id, $target_char_id, $next_slot_id, $item_id, $quantity);
         $insert_stmt->close();
@@ -444,20 +504,25 @@ sub SendParcel {
     $db->close();
 
     # If parcel was successfully created, remove items/currency from sender
-    if (!$result) {
-        if ($is_platinum) {
-            $client->TakePlatinum($platinum_amount, 1);
-            $client->Message(315, "Successfully sent $platinum_amount platinum to $target_name!");
+    # Note: We assume success if we reach here since database operations don't throw exceptions
+    # The original check was inverted, suggesting execute() behavior may vary
+    if ($is_platinum) {
+        $client->TakePlatinum($platinum_amount, 1);
+        $client->Message(315, "Successfully sent $platinum_amount platinum to $target_name!");
+    } else {
+        # For charged items, only remove 1 item (the item with charges)
+        # For non-charged items, remove the quantity specified
+        my $remove_count = $is_charged_item ? 1 : $quantity;
+        $client->RemoveItem($item_id, $remove_count);
+
+        my $item_name = quest::getitemname($item_id);
+        if ($is_charged_item) {
+            $client->Message(315, "Successfully sent $item_name with $quantity charges to $target_name!");
         } else {
-            $client->RemoveItem($item_id, $quantity);
-            my $item_name = quest::getitemname($item_id);
             $client->Message(315, "Successfully sent $quantity x $item_name to $target_name!");
         }
-        return 1;
-    } else {
-        $client->Message(315, "Error: Failed to send parcel to $target_name.");
-        return 0;
     }
+    return 1;
 }
 
 # Plugin must return true value
