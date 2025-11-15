@@ -431,12 +431,12 @@ sub SendParcel {
 
         while (my $inv_row = $augment_check_stmt->fetch_hashref()) {
             # Check if any augment slot is populated (non-zero)
-            my $has_augments = (defined $inv_row->{"augslot1"} && $inv_row->{"augslot1"} != 0) ||
-                              (defined $inv_row->{"augslot2"} && $inv_row->{"augslot2"} != 0) ||
-                              (defined $inv_row->{"augslot3"} && $inv_row->{"augslot3"} != 0) ||
-                              (defined $inv_row->{"augslot4"} && $inv_row->{"augslot4"} != 0) ||
-                              (defined $inv_row->{"augslot5"} && $inv_row->{"augslot5"} != 0) ||
-                              (defined $inv_row->{"augslot6"} && $inv_row->{"augslot6"} != 0);
+            my $has_augments = (defined $inv_row->{"augment_one"} && $inv_row->{"augment_one"} != 0) ||
+                              (defined $inv_row->{"augment_two"} && $inv_row->{"augment_two"} != 0) ||
+                              (defined $inv_row->{"augment_three"} && $inv_row->{"augment_three"} != 0) ||
+                              (defined $inv_row->{"augment_four"} && $inv_row->{"augment_four"} != 0) ||
+                              (defined $inv_row->{"augment_five"} && $inv_row->{"augment_five"} != 0) ||
+                              (defined $inv_row->{"augment_six"} && $inv_row->{"augment_six"} != 0);
 
             if ($has_augments) {
                 my $item_name = quest::getitemname($item_id);
