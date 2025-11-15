@@ -378,7 +378,7 @@ sub SendParcel {
         $item_flags_nodrop->close();
 
         # Check 2: Inventory instance attuned flag (instnodrop)
-        my $item_flags_attuned = $db->prepare("SELECT instnodrop FROM inventory WHERE charid = ? AND itemid = ? LIMIT 1");
+        my $item_flags_attuned = $db->prepare("SELECT instnodrop FROM inventory WHERE character_id = ? AND item_id = ? LIMIT 1");
         $item_flags_attuned->execute($sender_char_id, $item_id);
         my $item_attuned_data = $item_flags_attuned->fetch_hashref();
         $item_flags_attuned->close();
@@ -400,7 +400,7 @@ sub SendParcel {
         }
 
         # Check if any instances of this item in the player's inventory have augments
-        my $augment_check_stmt = $db->prepare("SELECT augslot1, augslot2, augslot3, augslot4, augslot5, augslot6 FROM inventory WHERE charid = ? AND itemid = ? LIMIT 1");
+        my $augment_check_stmt = $db->prepare("SELECT augment_one, augment_two, augment_three, augment_four, augment_five, augment_six FROM inventory WHERE character_id = ? AND item_id = ? LIMIT 1");
         $augment_check_stmt->execute($sender_char_id, $item_id);
 
         while (my $inv_row = $augment_check_stmt->fetch_hashref()) {
