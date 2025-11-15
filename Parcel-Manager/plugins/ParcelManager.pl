@@ -287,13 +287,34 @@ sub SendParcel {
     my $client = plugin::val('$client');
 
     if (!defined $client) {
-        #quest::debug("Error: Client context lost in SendParcel.");
+        quest::debug("Error: Client context lost in SendParcel.");
         return 0;
     }
 
-    # Validate inputs
-    $item_id = int($item_id) if defined $item_id;
-    $quantity = int($quantity) if defined $quantity;
+    # Debug logging
+    $client->Message(315, "[DEBUG] SendParcel START - target=$target_name, item=$item_id, qty=$quantity");
+    quest::debug("SendParcel called: target='$target_name', item='$item_id', qty='$quantity'");
+
+    # Check for platinum sending (special case)
+    my $is_platinum = 0;
+    my $platinum_amount = 0;
+
+    # Ensure quantity is defined and convert to int first
+    $quantity = defined $quantity ? int($quantity) : 0;
+    quest::debug("After int conversion: quantity=$quantity");
+
+    if (defined $item_id && lc($item_id) eq "platinum") {
+        $is_platinum = 1;
+        $platinum_amount = $quantity;
+        # Convert platinum to copper for storage (1 plat = 1000 copper)
+        $quantity = $platinum_amount * 1000;
+        $item_id = 99990; # Special currency item ID
+        quest::debug("Platinum detected: platinum_amount=$platinum_amount, quantity=$quantity, item_id=$item_id");
+    } else {
+        # Convert item_id to int if not platinum
+        $item_id = int($item_id) if defined $item_id;
+        quest::debug("Regular item: item_id=$item_id, quantity=$quantity");
+    }
 
     if (!defined $target_name || $target_name eq "") {
         $client->Message(315, "Error: Target character name is required.");
@@ -327,12 +348,80 @@ sub SendParcel {
     my $target_char_id = int($char_row->{"id"});
     #quest::debug("SendParcel: Found character '$target_name' with ID $target_char_id");
 
-    # Check if player has the item in their inventory
-    my $has_item = $client->CountItem($item_id);
-    if ($has_item < $quantity) {
-        $client->Message(315, "Error: You don't have enough of that item. You have $has_item but need $quantity.");
-        $db->close();
-        return 0;
+    # Handle platinum sending separately
+    if ($is_platinum) {
+        # Check if player has enough platinum
+        my $player_platinum = $client->GetCarriedPlatinum();
+        if ($player_platinum < $platinum_amount) {
+            $client->Message(315, "Error: You don't have enough platinum. You have $player_platinum but need $platinum_amount.");
+            $db->close();
+            return 0;
+        }
+        # Platinum will be deducted later after successful parcel creation
+    } else {
+        # Check if player has the item in their inventory
+        my $has_item = $client->CountItem($item_id);
+        if ($has_item < $quantity) {
+            $client->Message(315, "Error: You don't have enough of that item. You have $has_item but need $quantity.");
+            $db->close();
+            return 0;
+        }
+
+        # Check if the item is attuned or nodrop
+        # Get sender's character ID first
+        my $sender_char_id = $client->CharacterID();
+
+        # Check 1: Item table nodrop flag
+        my $item_flags_nodrop = $db->prepare("SELECT nodrop FROM items WHERE id = ? LIMIT 1");
+        $item_flags_nodrop->execute($item_id);
+        my $item_nodrop_data = $item_flags_nodrop->fetch_hashref();
+        $item_flags_nodrop->close();
+
+        # Check 2: Inventory instance attuned flag (instnodrop)
+        my $item_flags_attuned = $db->prepare("SELECT instnodrop FROM inventory WHERE character_id = ? AND item_id = ? LIMIT 1");
+        $item_flags_attuned->execute($sender_char_id, $item_id);
+        my $item_attuned_data = $item_flags_attuned->fetch_hashref();
+        $item_flags_attuned->close();
+
+        # Check nodrop flag (nodrop = 0 means NODROP)
+        my $is_nodrop = (defined $item_nodrop_data && defined $item_nodrop_data->{"nodrop"} && $item_nodrop_data->{"nodrop"} == 0);
+
+        # Check attuned flag (instnodrop = 1 means ATTUNED)
+        my $is_attuned = (defined $item_attuned_data && defined $item_attuned_data->{"instnodrop"} && $item_attuned_data->{"instnodrop"} == 1);
+
+        if ($is_nodrop || $is_attuned) {
+            my $item_name = quest::getitemname($item_id);
+            my $reason = $is_nodrop && $is_attuned ? "NODROP and ATTUNED" :
+                         $is_nodrop ? "NODROP" : "ATTUNED";
+            $client->Message(315, "Error: Cannot send '$item_name' - this item is $reason and cannot be parceled.");
+            quest::debug("SendParcel: Blocked parceling of item $item_id ($item_name) - $reason");
+            $db->close();
+            return 0;
+        }
+
+        # Check if any instances of this item in the player's inventory have augments
+        my $augment_check_stmt = $db->prepare("SELECT augment_one, augment_two, augment_three, augment_four, augment_five, augment_six FROM inventory WHERE character_id = ? AND item_id = ? LIMIT 1");
+        $augment_check_stmt->execute($sender_char_id, $item_id);
+
+        while (my $inv_row = $augment_check_stmt->fetch_hashref()) {
+            # Check if any augment slot is populated (non-zero)
+            my $has_augments = (defined $inv_row->{"augslot1"} && $inv_row->{"augslot1"} != 0) ||
+                              (defined $inv_row->{"augslot2"} && $inv_row->{"augslot2"} != 0) ||
+                              (defined $inv_row->{"augslot3"} && $inv_row->{"augslot3"} != 0) ||
+                              (defined $inv_row->{"augslot4"} && $inv_row->{"augslot4"} != 0) ||
+                              (defined $inv_row->{"augslot5"} && $inv_row->{"augslot5"} != 0) ||
+                              (defined $inv_row->{"augslot6"} && $inv_row->{"augslot6"} != 0);
+
+            if ($has_augments) {
+                my $item_name = quest::getitemname($item_id);
+                $client->Message(315, "Error: Cannot send '$item_name' - items with augments cannot be parceled. Please remove augments first.");
+                #quest::debug("SendParcel: Blocked parceling of item $item_id ($item_name) - has augments");
+                $augment_check_stmt->close();
+                $db->close();
+                return 0;
+            }
+        }
+        $augment_check_stmt->close();
     }
 
     # Optional: Set from_name if not provided
@@ -392,11 +481,17 @@ sub SendParcel {
     $db->close();
 
     if (!$result) {
-        # Remove the item from the sender's inventory
-        $client->RemoveItem($item_id, $quantity);
-
-        my $item_name = quest::getitemname($item_id);
-        $client->Message(315, "Successfully sent $quantity x $item_name to $target_name!");
+        # Remove the item/currency from the sender's inventory
+        if ($is_platinum) {
+            # Take platinum from the sender
+            $client->TakePlatinum($platinum_amount, 1);
+            $client->Message(315, "Successfully sent $platinum_amount platinum to $target_name!");
+        } else {
+            # Remove the item from the sender's inventory
+            $client->RemoveItem($item_id, $quantity);
+            my $item_name = quest::getitemname($item_id);
+            $client->Message(315, "Successfully sent $quantity x $item_name to $target_name!");
+        }
         return 1;
     } else {
         $client->Message(315, "Error: Failed to send parcel to $target_name.");
