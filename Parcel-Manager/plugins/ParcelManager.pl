@@ -154,7 +154,12 @@ sub RedeemParcel {
 
         if ($max_charges > 0) {
             # Item with charges: quantity represents charges, summon one item with those charges
-            $claim_success = $client->SummonItemIntoInventory($item_id, $quantity);
+            my %item_data = (
+                item_id => $item_id,
+                charges => $quantity,
+                attuned => 0
+            );
+            $claim_success = $client->SummonItemIntoInventory(\%item_data);
             if ($claim_success) {
                 $items_claimed = 1;
                 $message = "You have reclaimed $item_name with $quantity charges and it was placed in your inventory!";
@@ -166,7 +171,12 @@ sub RedeemParcel {
             }
         } elsif ($stacksize > 1) {
             # Stackable item: summon entire quantity at once
-            $claim_success = $client->SummonItemIntoInventory($item_id, $quantity);
+            my %item_data = (
+                item_id => $item_id,
+                charges => $quantity,
+                attuned => 0
+            );
+            $claim_success = $client->SummonItemIntoInventory(\%item_data);
             if ($claim_success) {
                 $items_claimed = $quantity;
                 $message = "You have reclaimed $quantity x $item_name and it was placed in your inventory!";
@@ -179,7 +189,12 @@ sub RedeemParcel {
         } else {
             # Non-stackable: summon individual items
             for (my $i = 0; $i < $quantity; $i++) {
-                my $success = $client->SummonItemIntoInventory($item_id);
+                my %item_data = (
+                    item_id => $item_id,
+                    charges => 0,
+                    attuned => 0
+                );
+                my $success = $client->SummonItemIntoInventory(\%item_data);
                 if ($success) {
                     $items_claimed++;
                 } else {
@@ -284,7 +299,12 @@ sub ReclaimAllParcels {
 
             if ($max_charges > 0) {
                 # Item with charges: quantity represents charges, summon one item with those charges
-                $claim_success = $client->SummonItemIntoInventory($item_id, $quantity);
+                my %item_data = (
+                    item_id => $item_id,
+                    charges => $quantity,
+                    attuned => 0
+                );
+                $claim_success = $client->SummonItemIntoInventory(\%item_data);
                 if ($claim_success) {
                     $parcels_claimed_data .= " | $item_name ($quantity charges)";
                 } else {
@@ -295,7 +315,12 @@ sub ReclaimAllParcels {
                 }
             } elsif ($stacksize > 1) {
                 # Stackable item: summon entire quantity at once
-                $claim_success = $client->SummonItemIntoInventory($item_id, $quantity);
+                my %item_data = (
+                    item_id => $item_id,
+                    charges => $quantity,
+                    attuned => 0
+                );
+                $claim_success = $client->SummonItemIntoInventory(\%item_data);
                 if ($claim_success) {
                     $parcels_claimed_data .= " | $item_name ($quantity)";
                 } else {
@@ -308,7 +333,12 @@ sub ReclaimAllParcels {
                 # Non-stackable: summon individual items
                 my $items_claimed = 0;
                 for (my $i = 0; $i < $quantity; $i++) {
-                    my $success = $client->SummonItemIntoInventory($item_id);
+                    my %item_data = (
+                        item_id => $item_id,
+                        charges => 0,
+                        attuned => 0
+                    );
+                    my $success = $client->SummonItemIntoInventory(\%item_data);
                     if ($success) {
                         $items_claimed++;
                     } else {
