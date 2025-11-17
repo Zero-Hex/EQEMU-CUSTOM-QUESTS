@@ -24,9 +24,9 @@ sub EVENT_SAY {
         }
         
         # --- GM Commands ---
-        if ($arg =~ /^start\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s*(\d*)/) {
-            my ($name, $item_id, $hours, $min_bid, $increment) = ($1, $2, $3, $4, $5);
-            auction::CommandStartAuction($client, $name, $item_id, $hours, $min_bid, $increment);
+      if ($arg =~ /^start\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s*(\d*)\s*(\d*)/) {
+            my ($name, $item_id, $hours, $min_bid, $increment, $bin_price) = ($1, $2, $3, $4, $5, $6);
+            auction::CommandStartAuction($client, $name, $item_id, $hours, $min_bid, $increment, $bin_price);
             return 1;
         } 
         
@@ -93,4 +93,5 @@ sub EVENT_SAY {
         }
     }
 }
+
 
