@@ -154,8 +154,9 @@ sub RedeemParcel {
 
         if ($max_charges > 0) {
             # Item with charges: quantity represents charges, summon one item with those charges
-            my $item_obj = quest::summonitem($item_id, $quantity);
+            my $item_obj = quest::CreateItem($item_id);
             if (defined $item_obj) {
+                $item_obj->SetCharges($quantity);
                 $claim_success = $client->SummonItemIntoInventory($item_obj);
                 if ($claim_success) {
                     $items_claimed = 1;
@@ -169,8 +170,9 @@ sub RedeemParcel {
             }
         } elsif ($stacksize > 1) {
             # Stackable item: summon entire quantity at once
-            my $item_obj = quest::summonitem($item_id, $quantity);
+            my $item_obj = quest::CreateItem($item_id);
             if (defined $item_obj) {
+                $item_obj->SetCharges($quantity);
                 $claim_success = $client->SummonItemIntoInventory($item_obj);
                 if ($claim_success) {
                     $items_claimed = $quantity;
@@ -185,7 +187,7 @@ sub RedeemParcel {
         } else {
             # Non-stackable: summon individual items
             for (my $i = 0; $i < $quantity; $i++) {
-                my $item_obj = quest::summonitem($item_id);
+                my $item_obj = quest::CreateItem($item_id);
                 if (defined $item_obj) {
                     my $success = $client->SummonItemIntoInventory($item_obj);
                     if ($success) {
@@ -293,8 +295,9 @@ sub ReclaimAllParcels {
 
             if ($max_charges > 0) {
                 # Item with charges: quantity represents charges, summon one item with those charges
-                my $item_obj = quest::summonitem($item_id, $quantity);
+                my $item_obj = quest::CreateItem($item_id);
                 if (defined $item_obj) {
+                    $item_obj->SetCharges($quantity);
                     $claim_success = $client->SummonItemIntoInventory($item_obj);
                     if ($claim_success) {
                         $parcels_claimed_data .= " | $item_name ($quantity charges)";
@@ -307,8 +310,9 @@ sub ReclaimAllParcels {
                 }
             } elsif ($stacksize > 1) {
                 # Stackable item: summon entire quantity at once
-                my $item_obj = quest::summonitem($item_id, $quantity);
+                my $item_obj = quest::CreateItem($item_id);
                 if (defined $item_obj) {
+                    $item_obj->SetCharges($quantity);
                     $claim_success = $client->SummonItemIntoInventory($item_obj);
                     if ($claim_success) {
                         $parcels_claimed_data .= " | $item_name ($quantity)";
@@ -323,7 +327,7 @@ sub ReclaimAllParcels {
                 # Non-stackable: summon individual items
                 my $items_claimed = 0;
                 for (my $i = 0; $i < $quantity; $i++) {
-                    my $item_obj = quest::summonitem($item_id);
+                    my $item_obj = quest::CreateItem($item_id);
                     if (defined $item_obj) {
                         my $success = $client->SummonItemIntoInventory($item_obj);
                         if ($success) {
