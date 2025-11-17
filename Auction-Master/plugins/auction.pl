@@ -289,8 +289,8 @@ sub CommandGMHelp {
 }
 
 sub CommandStartAuction {
-    my ($client, $auction_name_input, $item_id, $hours, $min_bid, $custom_increment) = @_;
-    my $admin_level = $client->GetGMStatus() || 0; 
+    my ($client, $auction_name_input, $item_id, $hours, $min_bid, $custom_increment, $custom_bin_price) = @_;
+    my $admin_level = $client->GetGMStatus() || 0;
     my $name = $client->GetName();
     my $currency_name = GetCurrencyName();
 
@@ -300,9 +300,9 @@ sub CommandStartAuction {
     }
 
     my $set_increment = ($custom_increment && $custom_increment > 0) ? $custom_increment : $DEFAULT_MIN_INCREMENT;
-    my $auction_name = $auction_name_input; 
-    my $auction_key = GetAuctionDataKey($auction_name); 
-    
+    my $auction_name = $auction_name_input;
+    my $auction_key = GetAuctionDataKey($auction_name);
+
     if (quest::get_data($auction_key)) {
         $client->Message(315, "Auction '$auction_name' already exists! Please choose a different name.");
         return;
@@ -310,7 +310,7 @@ sub CommandStartAuction {
 
     my $current_time = time();
     my $end_time = $current_time + ($hours * 3600);
-    my $bin_price = $STATIC_BUY_IT_NOW_PRICE; # Use the defined static BIN price
+    my $bin_price = ($custom_bin_price && $custom_bin_price > 0) ? $custom_bin_price : $STATIC_BUY_IT_NOW_PRICE;
 
     # RESTORED: Saving 8 fields consistently: item_id|end_time|current_bid|current_winner_id|gm_name|min_bid|set_increment|bin_price
     my $auction_data = "$item_id|$end_time|0|0|$name|$min_bid|$set_increment|$bin_price";
