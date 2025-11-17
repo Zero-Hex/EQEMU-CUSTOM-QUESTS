@@ -152,59 +152,57 @@ sub RedeemParcel {
         my $items_claimed = 0;
         my $claim_success = 0;
 
+        # Check if inventory has space
+        my $free_slots = $client->GetFreeInventorySlotCount();
+        if ($free_slots <= 0) {
+            $client->Message(315, "Your inventory is full! Cannot claim $item_name. Please make space and try again.");
+            $db->close();
+            plugin::DisplayParcels();
+            return;
+        }
+
         if ($max_charges > 0) {
             # Item with charges: quantity represents charges, summon one item with those charges
             my %item_data = (
                 item_id => $item_id,
                 charges => $quantity,
-                attuned => 0
+                attuned => 0,
+                augment_one => 0,
+                augment_two => 0,
+                augment_three => 0,
+                augment_four => 0,
+                augment_five => 0,
+                augment_six => 0
             );
-            $claim_success = $client->SummonItemIntoInventory(\%item_data);
-            if ($claim_success) {
-                $items_claimed = 1;
-                $message = "You have reclaimed $item_name with $quantity charges and it was placed in your inventory!";
-            } else {
-                $client->Message(315, "Your inventory is full! Cannot claim $item_name. Please make space and try again.");
-                $db->close();
-                plugin::DisplayParcels();
-                return;
-            }
+            $client->SummonItemIntoInventory(\%item_data);
+            $message = "You have reclaimed $item_name with $quantity charges and it was placed in your inventory!";
         } elsif ($stacksize > 1) {
             # Stackable item: summon entire quantity at once
             my %item_data = (
                 item_id => $item_id,
                 charges => $quantity,
-                attuned => 0
+                attuned => 0,
+                augment_one => 0,
+                augment_two => 0,
+                augment_three => 0,
+                augment_four => 0,
+                augment_five => 0,
+                augment_six => 0
             );
-            $claim_success = $client->SummonItemIntoInventory(\%item_data);
-            if ($claim_success) {
-                $items_claimed = $quantity;
-                $message = "You have reclaimed $quantity x $item_name and it was placed in your inventory!";
-            } else {
-                $client->Message(315, "Your inventory is full! Cannot claim $quantity x $item_name. Please make space and try again.");
-                $db->close();
-                plugin::DisplayParcels();
-                return;
-            }
+            $client->SummonItemIntoInventory(\%item_data);
+            $message = "You have reclaimed $quantity x $item_name and it was placed in your inventory!";
         } else {
             # Non-stackable: summon individual items
             for (my $i = 0; $i < $quantity; $i++) {
-                my %item_data = (
-                    item_id => $item_id,
-                    charges => 0,
-                    attuned => 0
-                );
-                my $success = $client->SummonItemIntoInventory(\%item_data);
-                if ($success) {
-                    $items_claimed++;
-                } else {
+                # Check if we still have space before each item
+                if ($client->GetFreeInventorySlotCount() <= 0) {
                     # Inventory full - update parcel with remaining items
-                    my $remaining = $quantity - $items_claimed;
-                    if ($items_claimed > 0) {
+                    my $remaining = $quantity - $i;
+                    if ($i > 0) {
                         my $update_stmt = $db->prepare("UPDATE character_parcels SET quantity = ? WHERE id = ? AND char_id = ?");
                         $update_stmt->execute($remaining, $parcel_id, $char_id);
                         $update_stmt->close();
-                        $client->Message(315, "Claimed $items_claimed x $item_name before inventory became full. $remaining remaining in parcel.");
+                        $client->Message(315, "Claimed $i x $item_name before inventory became full. $remaining remaining in parcel.");
                     } else {
                         $client->Message(315, "Your inventory is full! Cannot claim $item_name. Please make space and try again.");
                     }
@@ -212,6 +210,18 @@ sub RedeemParcel {
                     plugin::DisplayParcels();
                     return;
                 }
+                my %item_data = (
+                    item_id => $item_id,
+                    charges => 0,
+                    attuned => 0,
+                    augment_one => 0,
+                    augment_two => 0,
+                    augment_three => 0,
+                    augment_four => 0,
+                    augment_five => 0,
+                    augment_six => 0
+                );
+                $client->SummonItemIntoInventory(\%item_data);
             }
             $message = "You have reclaimed $quantity x $item_name and it was placed in your inventory!";
         }
@@ -297,58 +307,60 @@ sub ReclaimAllParcels {
             my $stacksize = $item_data ? int($item_data->{"stacksize"}) : 1;
             my $max_charges = $item_data ? int($item_data->{"maxcharges"}) : 0;
 
+            # Check if inventory has space
+            my $free_slots = $client->GetFreeInventorySlotCount();
+            if ($free_slots <= 0) {
+                $client->Message(315, "Inventory full while claiming $item_name! Remaining parcels were not claimed.");
+                $db->close();
+                plugin::DisplayParcels();
+                return;
+            }
+
             if ($max_charges > 0) {
                 # Item with charges: quantity represents charges, summon one item with those charges
                 my %item_data = (
                     item_id => $item_id,
                     charges => $quantity,
-                    attuned => 0
+                    attuned => 0,
+                    augment_one => 0,
+                    augment_two => 0,
+                    augment_three => 0,
+                    augment_four => 0,
+                    augment_five => 0,
+                    augment_six => 0
                 );
-                $claim_success = $client->SummonItemIntoInventory(\%item_data);
-                if ($claim_success) {
-                    $parcels_claimed_data .= " | $item_name ($quantity charges)";
-                } else {
-                    $client->Message(315, "Inventory full while claiming $item_name! Remaining parcels were not claimed.");
-                    $db->close();
-                    plugin::DisplayParcels();
-                    return;
-                }
+                $client->SummonItemIntoInventory(\%item_data);
+                $claim_success = 1;
+                $parcels_claimed_data .= " | $item_name ($quantity charges)";
             } elsif ($stacksize > 1) {
                 # Stackable item: summon entire quantity at once
                 my %item_data = (
                     item_id => $item_id,
                     charges => $quantity,
-                    attuned => 0
+                    attuned => 0,
+                    augment_one => 0,
+                    augment_two => 0,
+                    augment_three => 0,
+                    augment_four => 0,
+                    augment_five => 0,
+                    augment_six => 0
                 );
-                $claim_success = $client->SummonItemIntoInventory(\%item_data);
-                if ($claim_success) {
-                    $parcels_claimed_data .= " | $item_name ($quantity)";
-                } else {
-                    $client->Message(315, "Inventory full while claiming $quantity x $item_name! Remaining parcels were not claimed.");
-                    $db->close();
-                    plugin::DisplayParcels();
-                    return;
-                }
+                $client->SummonItemIntoInventory(\%item_data);
+                $claim_success = 1;
+                $parcels_claimed_data .= " | $item_name ($quantity)";
             } else {
                 # Non-stackable: summon individual items
                 my $items_claimed = 0;
                 for (my $i = 0; $i < $quantity; $i++) {
-                    my %item_data = (
-                        item_id => $item_id,
-                        charges => 0,
-                        attuned => 0
-                    );
-                    my $success = $client->SummonItemIntoInventory(\%item_data);
-                    if ($success) {
-                        $items_claimed++;
-                    } else {
+                    # Check if we still have space before each item
+                    if ($client->GetFreeInventorySlotCount() <= 0) {
                         # Inventory full - update parcel with remaining items
-                        my $remaining = $quantity - $items_claimed;
-                        if ($items_claimed > 0) {
+                        my $remaining = $quantity - $i;
+                        if ($i > 0) {
                             my $update_stmt = $db->prepare("UPDATE character_parcels SET quantity = ? WHERE id = ? AND char_id = ?");
                             $update_stmt->execute($remaining, $parcel_id, $char_id);
                             $update_stmt->close();
-                            $client->Message(315, "Claimed $items_claimed x $item_name before inventory became full. $remaining remaining in this parcel. Remaining parcels were not claimed.");
+                            $client->Message(315, "Claimed $i x $item_name before inventory became full. $remaining remaining in this parcel. Remaining parcels were not claimed.");
                         } else {
                             $client->Message(315, "Inventory full while claiming $item_name! Remaining parcels were not claimed.");
                         }
@@ -356,11 +368,22 @@ sub ReclaimAllParcels {
                         plugin::DisplayParcels();
                         return;
                     }
+                    my %item_data = (
+                        item_id => $item_id,
+                        charges => 0,
+                        attuned => 0,
+                        augment_one => 0,
+                        augment_two => 0,
+                        augment_three => 0,
+                        augment_four => 0,
+                        augment_five => 0,
+                        augment_six => 0
+                    );
+                    $client->SummonItemIntoInventory(\%item_data);
+                    $items_claimed++;
                 }
-                if ($items_claimed == $quantity) {
-                    $claim_success = 1;
-                    $parcels_claimed_data .= " | $item_name ($quantity)";
-                }
+                $claim_success = 1;
+                $parcels_claimed_data .= " | $item_name ($quantity)";
             }
         }
 
