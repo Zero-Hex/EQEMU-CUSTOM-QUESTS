@@ -40,7 +40,13 @@ sub DisplayParcels {
         my $reclaim_link = quest::saylink("!parcel reclaim $unique_key", 1, "Reclaim");
 
         # Format: Item name (quantity) [Reclaim link] || separator
-        $output .= "- $item_name ($quantity) $reclaim_link\n";
+        # Special handling for currency (item_id 99990): display in platinum instead of copper
+        if ($item_id == 99990) {
+            my $platinum = int($quantity / 1000);
+            $output .= "- Currency ($platinum Platinum) $reclaim_link\n";
+        } else {
+            $output .= "- $item_name ($quantity) $reclaim_link\n";
+        }
         $output .= "||\n";
     }
     $stmt->close();
